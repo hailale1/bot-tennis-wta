@@ -23,13 +23,14 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 TENNIS_API_KEY = os.environ.get("TENNIS_API_KEY")
 
-API_URL = "https://api.tennis-data.p.rapidapi.com" # Ajustar a tu endpoint de API
+API_URL = "https://api.tennis-data.p.rapidapi.com"
 HEADERS = {
     "x-rapidapi-key": TENNIS_API_KEY,
     "x-rapidapi-host": "tennis-data.p.rapidapi.com"
 }
 
 PARTIDOS_NOTIFICADOS = set()
+DICCIONARIO_CUOTAS = {}  # Memoria interna para cuotas pre-partido
 
 def enviar_alerta_telegram(mensaje):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -42,15 +43,30 @@ def enviar_alerta_telegram(mensaje):
     except Exception as e:
         print(f"Error enviando a Telegram: {e}")
 
+def actualizar_cuotas_prepartido():
+    """Escanea los partidos programados del día y almacena las cuotas pre-partido"""
+    global DICCIONARIO_CUOTAS
+    try:
+        res = requests.get(f"{API_URL}/fixtures", headers=HEADERS, timeout=15)
+        if res.status_code == 200:
+            data = res.json()
+            matches = data.get("response", []) or data.get("matches", [])
+            for partido in matches:
+                m_id = partido.get("id") or partido.get("match_id")
+                odds_p1 = float(partido.get("odds_player1", 0) or partido.get("odds_p1", 0))
+                odds_p2 = float(partido.get("odds_player2", 0) or partido.get("odds_p2", 0))
+                if m_id and (odds_p1 > 0 or odds_p2 > 0):
+                    DICCIONARIO_CUOTAS[m_id] = {"p1": odds_p1, "p2": odds_p2}
+            print(f"Memoria de cuotas actualizada: {len(DICCIONARIO_CUOTAS)} partidos almacenados.")
+    except Exception as e:
+        print(f"Error al precargar cuotas pre-partido: {e}")
+
 def parse_val(raw_val, default="N/D"):
-    """Limpia y da formato a porcentajes o valores numéricos de la API"""
     if raw_val is None or raw_val == "":
         return default
-    val_str = str(raw_val).strip()
-    return val_str
+    return str(raw_val).strip()
 
 def parse_service_pct(raw_val):
-    """Convierte cualquier formato de % de servicio a float para la condición"""
     if raw_val is None:
         return 0.0
     try:
@@ -63,7 +79,6 @@ def parse_service_pct(raw_val):
         return 0.0
 
 def extraer_bloque_stats(player_stats, nombre_jugadora):
-    """Extrae las 7 métricas solicitadas para una jugadora"""
     srv_1st_pct = parse_val(player_stats.get("first_serve_pct") or player_stats.get("1st_serve_pct"))
     srv_1st_won = parse_val(player_stats.get("first_serve_points_won") or player_stats.get("1st_serve_won"))
     srv_2nd_won = parse_val(player_stats.get("second_serve_points_won") or player_stats.get("2nd_serve_won"))
@@ -75,8 +90,8 @@ def extraer_bloque_stats(player_stats, nombre_jugadora):
     return (
         f"👤 <b>{nombre_jugadora}</b>\n"
         f"• % 1er Servicio: <code>{srv_1st_pct}</code>\n"
-        f"• % Puntos 1er Servicio Ganados: <code>{srv_1st_won}</code>\n"
-        f"• % Puntos 2do Servicio Ganados: <code>{srv_2nd_won}</code>\n"
+        f"• % Pts 1er Serv. Ganados: <code>{srv_1st_won}</code>\n"
+        f"• % Pts 2do Serv. Ganados: <code>{srv_2nd_won}</code>\n"
         f"• Errores No Forzados: <code>{unforced_err}</code>\n"
         f"• Pts de Quiebre Salvados: <code>{bp_saved}</code>\n"
         f"• Pts de Quiebre Ganados: <code>{bp_won}</code>\n"
@@ -84,11 +99,18 @@ def extraer_bloque_stats(player_stats, nombre_jugadora):
     )
 
 def monitorear_wta():
-    enviar_alerta_telegram("🤖 <b>Bot WTA de monitoreo (Estadísticas Completas) activo.</b>")
-    print("Monitoreo WTA iniciado...")
+    enviar_alerta_telegram("🤖 <b>Bot WTA (con Almacén de Cuotas Pre-Partido) Iniciado.</b>")
+    actualizar_cuotas_prepartido()
     
+    ultimo_escaneo_cuotas = time.time()
+
     while True:
         try:
+            # Re-escaneo de cuotas pre-partido cada 2 horas
+            if time.time() - ultimo_escaneo_cuotas > 7200:
+                actualizar_cuotas_prepartido()
+                ultimo_escaneo_cuotas = time.time()
+
             res = requests.get(f"{API_URL}/live", headers=HEADERS, timeout=15)
             if res.status_code != 200:
                 time.sleep(60)
@@ -113,25 +135,29 @@ def monitorear_wta():
                 if not set1_finished:
                     continue
 
+                # 1. Recuperar cuotas pre-partido (de la memoria interna o del objeto directo)
+                pre_odds = DICCIONARIO_CUOTAS.get(match_id, {})
+                odds_p1 = pre_odds.get("p1") or float(partido.get("odds_pre_p1", 0) or partido.get("odds_p1", 1.50))
+                odds_p2 = pre_odds.get("p2") or float(partido.get("odds_pre_p2", 0) or partido.get("odds_p2", 1.50))
+
                 fav_player = None
-                rival_name = None
                 player_key = None
-                
-                odds_fav = float(partido.get("odds_pre", 1.50))
-                
-                if 1.20 <= odds_fav <= 1.80:
-                    if set1_p1 < set1_p2:
-                        fav_player = p1
-                        rival_name = p2
-                        player_key = "player1"
-                    elif set1_p2 < set1_p1:
-                        fav_player = p2
-                        rival_name = p1
-                        player_key = "player2"
+                odds_fav = 0.0
+
+                # 2. Evaluar si P1 o P2 era la favorita (1.20 a 1.80) y si perdió el 1er set
+                if 1.20 <= odds_p1 <= 1.80 and set1_p1 < set1_p2:
+                    fav_player = p1
+                    odds_fav = odds_p1
+                    player_key = "player1"
+                elif 1.20 <= odds_p2 <= 1.80 and set1_p2 < set1_p1:
+                    fav_player = p2
+                    odds_fav = odds_p2
+                    player_key = "player2"
 
                 if not fav_player:
                     continue
 
+                # 3. Extraer estadísticas
                 stats = partido.get("stats", {}) or partido.get("statistics", {})
                 p1_stats = stats.get("player1", {})
                 p2_stats = stats.get("player2", {})
@@ -140,10 +166,8 @@ def monitorear_wta():
                 raw_pct = fav_stats.get("first_serve_pct") or fav_stats.get("first_serve_percentage") or fav_stats.get("1st_serve_pct")
                 first_serve_pct = parse_service_pct(raw_pct)
 
-                # Condición: Primer servicio > 47% (o 0.0 si la API aún no desglosa el % específico)
+                # 4. Condición: 1er Servicio > 47% (o 0.0 si la API aún no desglosa el % específico)
                 if first_serve_pct > 47.0 or first_serve_pct == 0.0:
-                    
-                    # Generar bloques detallados de ambas jugadoras
                     stats_p1_text = extraer_bloque_stats(p1_stats, p1)
                     stats_p2_text = extraer_bloque_stats(p2_stats, p2)
 
