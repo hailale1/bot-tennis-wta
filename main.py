@@ -1,194 +1,239 @@
 import os
-import time
+import sqlite3
+import logging
 import requests
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from datetime import datetime, timedelta
+from apscheduler.schedulers.background import BackgroundScheduler
 
-# 1. Servidor de salud para mantener Render activo gratis
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot WTA en vivo activo")
+# --- 1. CONFIGURACIÓN DE ENTORNO ---
+# Configura estas variables en el panel de Render (Environment Variables)
+ODDS_API_KEY = os.getenv("ODDS_API_KEY", "TU_ODDS_API_KEY")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "TU_TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "TU_TELEGRAM_CHAT_ID")
+LIVE_SCORE_API_KEY = os.getenv("LIVE_SCORE_API_KEY", "TU_LIVE_SCORE_API_KEY")
 
-def run_health_check_server():
-    port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
-    server.serve_forever()
+BASE_ODDS_URL = "https://api.the-odds-api.com/v4/sports/tennis_wta/odds/"
+DB_NAME = "wta_bot.db"
 
-threading.Thread(target=run_health_check_server, daemon=True).start()
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# 2. Configuración de Credenciales
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-TENNIS_API_KEY = os.environ.get("TENNIS_API_KEY")
+# CACHÉ EN MEMORIA (Evita fallos si Render reinicia la base de datos)
+PREMATCH_CACHE = {}
 
-API_URL = "https://api.tennis-data.p.rapidapi.com"
-HEADERS = {
-    "x-rapidapi-key": TENNIS_API_KEY,
-    "x-rapidapi-host": "tennis-data.p.rapidapi.com"
-}
+# --- 2. BASE DE DATOS LOCAL Y CACHÉ ---
+def init_db():
+    """Inicializa la tabla donde se congelan las cuotas a T-30 minutos."""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS wta_matches (
+            match_id TEXT PRIMARY KEY,
+            player_1 TEXT,
+            player_2 TEXT,
+            p1_pre_odds REAL,
+            p2_pre_odds REAL,
+            prematch_favorite TEXT,
+            snapshot_time TEXT,
+            alert_sent INTEGER DEFAULT 0
+        )
+    ''')
+    conn.commit()
+    conn.close()
+    logging.info(" Base de datos local SQLite lista.")
 
-PARTIDOS_NOTIFICADOS = set()
-DICCIONARIO_CUOTAS = {}  # Memoria interna para cuotas pre-partido
+def save_prematch_favorite(match_id, player_1, player_2, p1_odds, p2_odds):
+    """Congela las cuotas a T-30 min en SQLite y en memoria RAM."""
+    # Determina la favorita pre-partido (menor cuota)
+    favorite = player_1 if p1_odds < p2_odds else player_2
+    fav_odds = p1_odds if favorite == player_1 else p2_odds
+    
+    # 1. Guardar en memoria RAM
+    PREMATCH_CACHE[match_id] = {
+        "player_1": player_1,
+        "player_2": player_2,
+        "p1_pre_odds": p1_odds,
+        "p2_pre_odds": p2_odds,
+        "prematch_favorite": favorite,
+        "fav_odds": fav_odds,
+        "alert_sent": False
+    }
 
-def enviar_alerta_telegram(mensaje):
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("Faltan credenciales de Telegram.")
-        return
+    # 2. Guardar en SQLite
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT OR REPLACE INTO wta_matches 
+            (match_id, player_1, player_2, p1_pre_odds, p2_pre_odds, prematch_favorite, snapshot_time, alert_sent)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+        ''', (match_id, player_1, player_2, p1_odds, p2_odds, favorite, datetime.now().isoformat()))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logging.error(f"Error escribiendo en SQLite: {e}")
+
+    logging.info(f" [T-30 CAPTURADO] {player_1} vs {player_2} | Favorita: {favorite} (Cuota: {fav_odds:.2f})")
+
+# --- 3. CAPTURA DE CUOTAS A T-30 MINUTOS ---
+def fetch_and_store_t30(match_id, player_1, player_2):
+    """Obtiene y guarda las cuotas exactas a 30 min del inicio."""
+    params = {
+        'apiKey': ODDS_API_KEY,
+        'regions': 'eu',
+        'markets': 'h2h'
+    }
+    try:
+        res = requests.get(BASE_ODDS_URL, params=params, timeout=10).json()
+        for match in res:
+            if match['id'] == match_id:
+                outcomes = match['bookmakers'][0]['markets'][0]['outcomes']
+                p1_odds = next(o['price'] for o in outcomes if o['name'] == player_1)
+                p2_odds = next(o['price'] for o in outcomes if o['name'] == player_2)
+                
+                save_prematch_favorite(match_id, player_1, player_2, p1_odds, p2_odds)
+                break
+    except Exception as e:
+        logging.error(f"Error al obtener cuotas T-30 para {match_id}: {e}")
+
+def schedule_daily_matches(scheduler):
+    """Escanea los partidos WTA programados y programa la captura a T-30 min."""
+    params = {'apiKey': ODDS_API_KEY}
+    try:
+        matches = requests.get(BASE_ODDS_URL, params=params, timeout=10).json()
+        for match in matches:
+            match_id = match['id']
+            p1 = match['home_team']
+            p2 = match['away_team']
+            
+            # Formato ISO UTC
+            start_time = datetime.fromisoformat(match['commence_time'].replace('Z', '+00:00'))
+            run_time = start_time - timedelta(minutes=30)
+            
+            # Si T-30 está en el futuro, se agenda
+            if run_time > datetime.now(run_time.tzinfo):
+                scheduler.add_job(
+                    fetch_and_store_t30,
+                    'date',
+                    run_date=run_time,
+                    args=[match_id, p1, p2],
+                    id=f"t30_{match_id}",
+                    replace_existing=True
+                )
+                logging.info(f" Programado snapshot T-30 para {p1} vs {p2} a las {run_time}")
+            else:
+                # Si el partido inicia en menos de 30 min, congelar cuotas inmediatamente
+                fetch_and_store_t30(match_id, p1, p2)
+    except Exception as e:
+        logging.error(f"Error escaneando partidos programados: {e}")
+
+# --- 4. ENVÍO DE ALERTAS DE TELEGRAM ---
+def send_telegram_alert(match_name, favorite, fav_odds, winner_set1, fs_pct):
+    """Envía el mensaje formateado a Telegram."""
+    mensaje = (
+        f"🎾 *ALERTA WTA: FAVORITA PERDIÓ 1ER SET*\n\n"
+        f"📌 *Partido:* {match_name}\n"
+        f"⭐ *Favorita Pre-Partido (T-30m):* {favorite} (Cuota: `{fav_odds:.2f}`)\n"
+        f"❌ *Ganadora Set 1:* {winner_set1}\n"
+        f"📊 *1er Servicio Favorita:* `{fs_pct:.1f}%` (Filtro >47% OK)\n\n"
+        f"💡 *Oportunidad:* Entrada de valor en directo."
+    )
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": mensaje, "parse_mode": "HTML"}
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": mensaje,
+        "parse_mode": "Markdown"
+    }
     try:
         requests.post(url, json=payload, timeout=10)
+        logging.info(f" Alerta Telegram enviada con éxito para {match_name}")
     except Exception as e:
-        print(f"Error enviando a Telegram: {e}")
+        logging.error(f"Error enviando mensaje a Telegram: {e}")
 
-def actualizar_cuotas_prepartido():
-    """Escanea los partidos programados del día y almacena las cuotas pre-partido"""
-    global DICCIONARIO_CUOTAS
-    try:
-        res = requests.get(f"{API_URL}/fixtures", headers=HEADERS, timeout=15)
-        if res.status_code == 200:
-            data = res.json()
-            matches = data.get("response", []) or data.get("matches", [])
-            for partido in matches:
-                m_id = partido.get("id") or partido.get("match_id")
-                odds_p1 = float(partido.get("odds_player1", 0) or partido.get("odds_p1", 0))
-                odds_p2 = float(partido.get("odds_player2", 0) or partido.get("odds_p2", 0))
-                if m_id and (odds_p1 > 0 or odds_p2 > 0):
-                    DICCIONARIO_CUOTAS[m_id] = {"p1": odds_p1, "p2": odds_p2}
-            print(f"Memoria de cuotas actualizada: {len(DICCIONARIO_CUOTAS)} partidos almacenados.")
-    except Exception as e:
-        print(f"Error al precargar cuotas pre-partido: {e}")
+# --- 5. EVALUACIÓN DE MARCADORES EN VIVO ---
+def evaluate_live_match(live_data):
+    """
+    Evalúa el partido en tiempo real al concluir el 1er set.
+    live_data: dict con información reportada por tu API en directo.
+    """
+    match_id = live_data['match_id']
+    set_1_finished = live_data.get('set_1_finished', False)
+    winner_set_1 = live_data.get('winner_set_1')
+    first_serve_pct = live_data.get('first_serve_pct', 0.0)
 
-def parse_val(raw_val, default="N/D"):
-    if raw_val is None or raw_val == "":
-        return default
-    return str(raw_val).strip()
+    if not set_1_finished:
+        return
 
-def parse_service_pct(raw_val):
-    if raw_val is None:
-        return 0.0
-    try:
-        val_str = str(raw_val).replace("%", "").strip()
-        val_float = float(val_str)
-        if 0 < val_float <= 1.0:
-            val_float = val_float * 100.0
-        return val_float
-    except Exception:
-        return 0.0
+    # Buscar datos pre-partido en RAM o SQLite
+    match_info = PREMATCH_CACHE.get(match_id)
 
-def extraer_bloque_stats(player_stats, nombre_jugadora):
-    srv_1st_pct = parse_val(player_stats.get("first_serve_pct") or player_stats.get("1st_serve_pct"))
-    srv_1st_won = parse_val(player_stats.get("first_serve_points_won") or player_stats.get("1st_serve_won"))
-    srv_2nd_won = parse_val(player_stats.get("second_serve_points_won") or player_stats.get("2nd_serve_won"))
-    unforced_err = parse_val(player_stats.get("unforced_errors") or player_stats.get("ue"))
-    bp_saved    = parse_val(player_stats.get("break_points_saved") or player_stats.get("bp_saved"))
-    bp_won      = parse_val(player_stats.get("break_points_converted") or player_stats.get("bp_won"))
-    games_won   = parse_val(player_stats.get("total_games_won") or player_stats.get("games_won"))
+    if not match_info:
+        # Fallback: Consulta SQLite si no está en RAM
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT player_1, player_2, p1_pre_odds, p2_pre_odds, prematch_favorite, alert_sent 
+            FROM wta_matches WHERE match_id = ?
+        ''', (match_id,))
+        rec = cursor.fetchone()
+        conn.close()
 
-    return (
-        f"👤 <b>{nombre_jugadora}</b>\n"
-        f"• % 1er Servicio: <code>{srv_1st_pct}</code>\n"
-        f"• % Pts 1er Serv. Ganados: <code>{srv_1st_won}</code>\n"
-        f"• % Pts 2do Serv. Ganados: <code>{srv_2nd_won}</code>\n"
-        f"• Errores No Forzados: <code>{unforced_err}</code>\n"
-        f"• Pts de Quiebre Salvados: <code>{bp_saved}</code>\n"
-        f"• Pts de Quiebre Ganados: <code>{bp_won}</code>\n"
-        f"• Total Juegos Ganados: <code>{games_won}</code>\n"
-    )
+        if rec:
+            p1, p2, p1_o, p2_o, fav, sent = rec
+            fav_o = p1_o if fav == p1 else p2_o
+            match_info = {
+                "player_1": p1, "player_2": p2,
+                "prematch_favorite": fav, "fav_odds": fav_o,
+                "alert_sent": bool(sent)
+            }
 
-def monitorear_wta():
-    enviar_alerta_telegram("🤖 <b>Bot WTA (con Almacén de Cuotas Pre-Partido) Iniciado.</b>")
-    actualizar_cuotas_prepartido()
-    
-    ultimo_escaneo_cuotas = time.time()
+    if not match_info:
+        logging.warning(f"⚠️ Sin cuotas pre-partido registradas para {match_id}. Alerta omitida.")
+        return
 
-    while True:
-        try:
-            # Re-escaneo de cuotas pre-partido cada 2 horas
-            if time.time() - ultimo_escaneo_cuotas > 7200:
-                actualizar_cuotas_prepartido()
-                ultimo_escaneo_cuotas = time.time()
+    if match_info['alert_sent']:
+        return
 
-            res = requests.get(f"{API_URL}/live", headers=HEADERS, timeout=15)
-            if res.status_code != 200:
-                time.sleep(60)
-                continue
-                
-            data = res.json()
-            matches = data.get("response", []) or data.get("matches", [])
+    fav_player = match_info['prematch_favorite']
+    fav_odds = match_info['fav_odds']
 
-            for partido in matches:
-                match_id = partido.get("id") or partido.get("match_id")
-                if not match_id or match_id in PARTIDOS_NOTIFICADOS:
-                    continue
+    # CONDICIONES DE FILTRO:
+    # 1. La favorita perdió el Set 1
+    # 2. Cuota pre-partido entre 1.20 y 1.80
+    # 3. % 1er servicio de la favorita >= 47%
+    favorita_perdio = (winner_set_1 != fav_player)
+    cuota_en_rango = (1.20 <= fav_odds <= 1.80)
+    servicio_valido = (first_serve_pct >= 47.0)
 
-                tournament = partido.get("tournament", {}).get("name", "Torneo WTA")
-                p1 = partido.get("player1", {}).get("name", "Jugadora 1")
-                p2 = partido.get("player2", {}).get("name", "Jugadora 2")
+    if favorita_perdio and cuota_en_rango and servicio_valido:
+        match_name = f"{match_info['player_1']} vs {match_info['player_2']}"
+        send_telegram_alert(match_name, fav_player, fav_odds, winner_set1, first_serve_pct)
 
-                set1_p1 = partido.get("scores", {}).get("set1_p1", 0)
-                set1_p2 = partido.get("scores", {}).get("set1_p2", 0)
-                set1_finished = partido.get("scores", {}).get("set1_finished", False) or (set1_p1 >= 6 or set1_p2 >= 6)
+        # Marcar alerta como enviada en RAM y SQLite
+        if match_id in PREMATCH_CACHE:
+            PREMATCH_CACHE[match_id]['alert_sent'] = True
 
-                if not set1_finished:
-                    continue
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute('UPDATE wta_matches SET alert_sent = 1 WHERE match_id = ?', (match_id,))
+        conn.commit()
+        conn.close()
 
-                # 1. Recuperar cuotas pre-partido (de la memoria interna o del objeto directo)
-                pre_odds = DICCIONARIO_CUOTAS.get(match_id, {})
-                odds_p1 = pre_odds.get("p1") or float(partido.get("odds_pre_p1", 0) or partido.get("odds_p1", 1.50))
-                odds_p2 = pre_odds.get("p2") or float(partido.get("odds_pre_p2", 0) or partido.get("odds_p2", 1.50))
-
-                fav_player = None
-                player_key = None
-                odds_fav = 0.0
-
-                # 2. Evaluar si P1 o P2 era la favorita (1.20 a 1.80) y si perdió el 1er set
-                if 1.20 <= odds_p1 <= 1.80 and set1_p1 < set1_p2:
-                    fav_player = p1
-                    odds_fav = odds_p1
-                    player_key = "player1"
-                elif 1.20 <= odds_p2 <= 1.80 and set1_p2 < set1_p1:
-                    fav_player = p2
-                    odds_fav = odds_p2
-                    player_key = "player2"
-
-                if not fav_player:
-                    continue
-
-                # 3. Extraer estadísticas
-                stats = partido.get("stats", {}) or partido.get("statistics", {})
-                p1_stats = stats.get("player1", {})
-                p2_stats = stats.get("player2", {})
-                
-                fav_stats = p1_stats if player_key == "player1" else p2_stats
-                raw_pct = fav_stats.get("first_serve_pct") or fav_stats.get("first_serve_percentage") or fav_stats.get("1st_serve_pct")
-                first_serve_pct = parse_service_pct(raw_pct)
-
-                # 4. Condición: 1er Servicio > 47% (o 0.0 si la API aún no desglosa el % específico)
-                if first_serve_pct > 47.0 or first_serve_pct == 0.0:
-                    stats_p1_text = extraer_bloque_stats(p1_stats, p1)
-                    stats_p2_text = extraer_bloque_stats(p2_stats, p2)
-
-                    mensaje = (
-                        f"🚨 <b>ALERTA TENIS WTA EN VIVO</b> 🚨\n\n"
-                        f"🏆 <b>Torneo:</b> {tournament}\n"
-                        f"📉 <b>Resultado Set 1:</b> {p1} {set1_p1} - {set1_p2} {p2}\n"
-                        f"⭐ <b>Favorita Pre-Partido:</b> {fav_player} (Cuota: {odds_fav:.2f})\n\n"
-                        f"📊 <b>ESTADÍSTICAS DEL PARTIDO (SET 1)</b>\n"
-                        f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"{stats_p1_text}\n"
-                        f"{stats_p2_text}\n"
-                        f"⚠️ <i>Las condiciones de racha e indicadores se han cumplido.</i>"
-                    )
-                    enviar_alerta_telegram(mensaje)
-                    PARTIDOS_NOTIFICADOS.add(match_id)
-
-        except Exception as e:
-            print(f"Error en el ciclo principal: {e}")
-
-        time.sleep(60)
-
+# --- 6. ARRANQUE DEL BOT ---
 if __name__ == "__main__":
-    monitorear_wta()
+    init_db()
+    
+    scheduler = BackgroundScheduler()
+    scheduler.start()
+
+    # Programar escaneo de partidos cada 6 horas
+    scheduler.add_job(lambda: schedule_daily_matches(scheduler), 'interval', hours=6)
+    
+    # Primer escaneo al iniciar
+    schedule_daily_matches(scheduler)
+
+    logging.info(" Bot WTA activo y listo en Render.")
+    
+    # Mantener el proceso activo en Render
+    import time
+    while True:
+        time.sleep(60)
