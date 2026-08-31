@@ -5,7 +5,7 @@ import requests
 from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
 
-# --- CONFIGURACIÓN ---
+# --- CONFIGURACIÓN DE VARIABLES DE ENTORNO ---
 ODDS_API_KEY = os.getenv("ODDS_API_KEY", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
