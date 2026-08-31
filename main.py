@@ -10,7 +10,7 @@ ODDS_API_KEY = os.getenv("ODDS_API_KEY", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
-BASE_ODDS_URL = "https://api.the-odds-api.com/v4/sports/tennis_wta/odds/"
+BASE_ODDS_URL = "https://api.the-odds-api.com/v4/sports/tennis_wta_us_open/odds/"
 DB_NAME = "wta_bot.db"
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
