@@ -133,7 +133,7 @@ def schedule_daily_matches(scheduler):
 if __name__ == "__main__":
     init_db()
     
-    # ENVIAR MENSAJE DE PRUEBA AL ENCONTRARSE ACTIVO
+    # MANDA MENSAJE AUTOMÁTICO EN CUANTO ARRANCA
     send_telegram_test()
     
     scheduler = BackgroundScheduler()
