@@ -173,7 +173,7 @@ if __name__ == "__main__":
     scheduler = BackgroundScheduler()
     scheduler.start()
     
-    scheduler.add_job(schedule_wta_matches, 'interval', hours=1, args=[scheduler])
+    scheduler.add_job(schedule_wta_matches, 'interval', minutes=20, args=[scheduler])
     logging.info("Bot WTA con Cálculo de Probabilidad Activo.")
     
     schedule_wta_matches(scheduler)
