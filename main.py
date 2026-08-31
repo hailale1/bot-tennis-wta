@@ -16,6 +16,23 @@ DB_NAME = "wta_bot.db"
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 PREMATCH_CACHE = {}
 
+def send_telegram_test():
+    """Envía un mensaje de prueba a Telegram al iniciar el bot."""
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": "🚨 ¡PRUEBA DE BOT EXITOSA! El servidor Render está activo y conectado con tu Telegram."
+        }
+        try:
+            r = requests.post(url, data=payload, timeout=10)
+            if r.status_code == 200:
+                logging.info("Mensaje de prueba enviado con éxito a Telegram.")
+            else:
+                logging.error(f"Error al enviar a Telegram: {r.text}")
+        except Exception as e:
+            logging.error(f"Fallo al conectar con Telegram: {e}")
+
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -115,6 +132,10 @@ def schedule_daily_matches(scheduler):
 
 if __name__ == "__main__":
     init_db()
+    
+    # ENVIAR MENSAJE DE PRUEBA AL ENCONTRARSE ACTIVO
+    send_telegram_test()
+    
     scheduler = BackgroundScheduler()
     scheduler.start()
     
