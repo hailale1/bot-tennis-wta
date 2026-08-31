@@ -10,7 +10,6 @@ ODDS_API_KEY = os.getenv("ODDS_API_KEY", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
-BASE_ODDS_URL = f"https://api.the-odds-api.com/v4/sports/tennis_wta_us_open/odds/?apiKey={ODDS_API_KEY}&regions=eu&markets=h2h"
 DB_NAME = "wta_bot.db"
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -22,7 +21,7 @@ def send_telegram_test():
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         payload = {
             "chat_id": TELEGRAM_CHAT_ID,
-            "text": "🚨 ¡PRUEBA DE BOT EXITOSA! El servidor Render está activo y conectado con tu Telegram."
+            "text": "🤖 ¡PRUEBA DE BOT EXITOSA! El servidor Render está activo y monitoreando TODOS los torneos WTA."
         }
         try:
             r = requests.post(url, data=payload, timeout=10)
@@ -43,107 +42,100 @@ def init_db():
             player_2 TEXT,
             p1_pre_odds REAL,
             p2_pre_odds REAL,
-            prematch_favorite TEXT,
-            snapshot_time TEXT,
-            alert_sent INTEGER DEFAULT 0
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     ''')
     conn.commit()
     conn.close()
-    logging.info("Base de datos local SQLite lista.")
 
-def save_prematch_favorite(match_id, player_1, player_2, p1_odds, p2_odds):
-    favorite = player_1 if p1_odds < p2_odds else player_2
-    fav_odds = p1_odds if favorite == player_1 else p2_odds
+def get_active_wta_tournaments():
+    """Consulta la lista de todos los deportes/torneos activos y filtra los de WTA."""
+    url = f"https://api.the-odds-api.com/v4/sports/?apiKey={ODDS_API_KEY}"
+    try:
+        r = requests.get(url, timeout=10)
+        if r.status_code == 200:
+            sports = r.json()
+            # Detecta cualquier clave que contenga 'tennis_wta' (ej. tennis_wta_us_open, tennis_wta_wuhan, etc.)
+            wta_keys = [s['key'] for s in sports if 'tennis_wta' in s['key']]
+            logging.info(f"Torneos WTA activos encontrados: {wta_keys}")
+            return wta_keys
+        else:
+            logging.error(f"Error al consultar lista de deportes: {r.text}")
+            return []
+    except Exception as e:
+        logging.error(f"Fallo al obtener torneos WTA activos: {e}")
+        return []
+
+def fetch_and_store_all_wta():
+    """Monitorea y almacena partidos de TODOS los torneos WTA activos."""
+    wta_tournaments = get_active_wta_tournaments()
     
-    PREMATCH_CACHE[match_id] = {
-        "player_1": player_1,
-        "player_2": player_2,
-        "p1_pre_odds": p1_odds,
-        "p2_pre_odds": p2_odds,
-        "prematch_favorite": favorite,
-        "fav_odds": fav_odds,
-        "alert_sent": False
-    }
+    if not wta_tournaments:
+        logging.info("No hay torneos WTA activos en este momento.")
+        return
 
-    try:
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT OR REPLACE INTO wta_matches 
-            (match_id, player_1, player_2, p1_pre_odds, p2_pre_odds, prematch_favorite, snapshot_time, alert_sent)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0)
-        ''', (match_id, player_1, player_2, p1_odds, p2_odds, favorite, datetime.now().isoformat()))
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logging.error(f"Error escribiendo en SQLite: {e}")
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
 
-    logging.info(f"[T-30 CAPTURADO] {player_1} vs {player_2} | Favorita: {favorite} (Cuota: {fav_odds:.2f})")
+    for sport_key in wta_tournaments:
+        url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/"
+        params = {
+            'apiKey': ODDS_API_KEY,
+            'regions': 'eu',
+            'markets': 'h2h'
+        }
+        try:
+            r = requests.get(url, params=params, timeout=10)
+            if r.status_code == 200:
+                matches = r.json()
+                for match in matches:
+                    match_id = match.get('id')
+                    p1 = match.get('home_team')
+                    p2 = match.get('away_team')
+                    
+                    # Extraer cuotas del primer bookmaker disponible
+                    bookmakers = match.get('bookmakers', [])
+                    p1_odds, p2_odds = None, None
+                    if bookmakers:
+                        outcomes = bookmakers[0].get('markets', [{}])[0].get('outcomes', [])
+                        for o in outcomes:
+                            if o.get('name') == p1:
+                                p1_odds = o.get('price')
+                            elif o.get('name') == p2:
+                                p2_odds = o.get('price')
 
-def fetch_and_store_t30(match_id, player_1, player_2):
-    params = {'apiKey': ODDS_API_KEY, 'regions': 'eu', 'markets': 'h2h'}
-    try:
-        res = requests.get(BASE_ODDS_URL, params=params, timeout=10).json()
-        if isinstance(res, list):
-            for match in res:
-                if match['id'] == match_id:
-                    outcomes = match['bookmakers'][0]['markets'][0]['outcomes']
-                    p1_odds = next(o['price'] for o in outcomes if o['name'] == player_1)
-                    p2_odds = next(o['price'] for o in outcomes if o['name'] == player_2)
-                    save_prematch_favorite(match_id, player_1, player_2, p1_odds, p2_odds)
-                    break
-    except Exception as e:
-        logging.error(f"Error al obtener cuotas T-30 para {match_id}: {e}")
+                    if match_id and p1 and p2:
+                        cursor.execute('''
+                            INSERT OR REPLACE INTO wta_matches (match_id, player_1, player_2, p1_pre_odds, p2_pre_odds)
+                            VALUES (?, ?, ?, ?, ?)
+                        ''', (match_id, p1, p2, p1_odds, p2_odds))
+                        logging.info(f"Guardado/Actualizado partido [{sport_key}]: {p1} vs {p2} (Odds: {p1_odds} / {p2_odds})")
+            else:
+                logging.error(f"Error en API para {sport_key}: {r.text}")
+        except Exception as e:
+            logging.error(f"Error al procesar {sport_key}: {e}")
 
-def schedule_daily_matches(scheduler):
-    params = {'apiKey': ODDS_API_KEY}
-    try:
-        res = requests.get(BASE_ODDS_URL, params=params, timeout=10)
-        data = res.json()
-        
-        if isinstance(data, dict):
-            logging.error(f"Respuesta de la API: {data.get('message', 'Error en la consulta')}")
-            return
-
-        if isinstance(data, list):
-            for match in data:
-                match_id = match['id']
-                p1 = match['home_team']
-                p2 = match['away_team']
-                
-                start_time = datetime.fromisoformat(match['commence_time'].replace('Z', '+00:00'))
-                run_time = start_time - timedelta(minutes=30)
-                
-                if run_time > datetime.now(run_time.tzinfo):
-                    scheduler.add_job(
-                        fetch_and_store_t30,
-                        'date',
-                        run_date=run_time,
-                        args=[match_id, p1, p2],
-                        id=f"t30_{match_id}",
-                        replace_existing=True
-                    )
-                    logging.info(f"Programado snapshot T-30 para {p1} vs {p2} a las {run_time}")
-                else:
-                    fetch_and_store_t30(match_id, p1, p2)
-    except Exception as e:
-        logging.error(f"Error escaneando partidos: {e}")
+    conn.commit()
+    conn.close()
 
 if __name__ == "__main__":
     init_db()
-    
-    # MANDA MENSAJE AUTOMÁTICO EN CUANTO ARRANCA
     send_telegram_test()
     
+    # Iniciar programador de tareas cada 30 minutos para revisar torneos y cuotas
     scheduler = BackgroundScheduler()
+    scheduler.add_job(fetch_and_store_all_wta, 'interval', minutes=30)
     scheduler.start()
+    logging.info("Bot WTA (Monitoreo Global) activo y listo en Render.")
     
-    scheduler.add_job(lambda: schedule_daily_matches(scheduler), 'interval', hours=6)
-    schedule_daily_matches(scheduler)
-
-    logging.info("Bot WTA activo y listo en Render.")
+    # Ejecución inicial
+    fetch_and_store_all_wta()
     
-    import time
-    while True:
-        time.sleep(60)
+    # Mantener proceso vivo para el web server de Render
+    import http.server
+    import socketserver
+    
+    PORT = int(os.environ.get("PORT", 8000))
+    Handler = http.server.SimpleHTTPRequestHandler
+    with socketserver.TCPServer(("", PORT), Handler) as httpd:
+        httpd.serve_forever()
