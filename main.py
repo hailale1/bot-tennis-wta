@@ -15,42 +15,6 @@ DB_NAME = "wta_bot.db"
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 PREMATCH_CACHE = {}
 
-def calculate_comeback_probability(pre_odds_fav, live_odds_fav, first_serve_pct):
-    """
-    Calcula una probabilidad estimada de remontada (%) basándose en:
-    - Probabilidad implícita inicial (Cuota T-5)
-    - Reacción del mercado en vivo
-    - Rendimiento técnico (Porcentaje de 1er servicio)
-    """
-    if not pre_odds_fav or pre_odds_fav <= 1.0:
-        return 50.0 # Valor base neutral por defecto
-        
-    # 1. Probabilidad implícita inicial
-    base_prob = (1.0 / pre_odds_fav) * 100
-    
-    # 2. Factor de Servicio (Si mantiene > 60% de primer servicio, suma fuerza)
-    service_factor = 0.0
-    if first_serve_pct >= 60:
-        service_factor = 5.0
-    elif first_serve_pct >= 50:
-        service_factor = 2.0
-    else:
-        service_factor = -3.0
-        
-    # 3. Factor de resistencia de cuota (Comparación Pre vs Live)
-    # Si la favorita era muy clara (< 1.40), su tasa histórica de remontada en WTA es mayor
-    strength_bonus = 0.0
-    if pre_odds_fav <= 1.30:
-        strength_bonus = 8.0
-    elif pre_odds_fav <= 1.60:
-        strength_bonus = 4.0
-
-    # Probabilidad final ajustada
-    estimated_prob = base_prob + service_factor + strength_bonus
-    
-    # Acotar entre 15% y 85% para mantener realismo estadístico
-    return round(max(15.0, min(85.0, estimated_prob)), 1)
-
 def send_telegram_alert(match_info, fav_name, pre_odds, live_odds, serve_pct, prob):
     """Envía la alerta detallada a Telegram con la probabilidad calculada."""
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
@@ -71,6 +35,30 @@ def send_telegram_alert(match_info, fav_name, pre_odds, live_odds, serve_pct, pr
             requests.post(url, data=payload, timeout=10)
         except Exception as e:
             logging.error(f"Error al enviar alerta a Telegram: {e}")
+
+def calculate_comeback_probability(pre_odds_fav, live_odds_fav, first_serve_pct):
+    """Calcula una probabilidad estimada de remontada (%)."""
+    if not pre_odds_fav or pre_odds_fav <= 1.0:
+        return 50.0
+        
+    base_prob = (1.0 / pre_odds_fav) * 100
+    
+    service_factor = 0.0
+    if first_serve_pct >= 60:
+        service_factor = 5.0
+    elif first_serve_pct >= 50:
+        service_factor = 2.0
+    else:
+        service_factor = -3.0
+        
+    strength_bonus = 0.0
+    if pre_odds_fav <= 1.30:
+        strength_bonus = 8.0
+    elif pre_odds_fav <= 1.60:
+        strength_bonus = 4.0
+
+    estimated_prob = base_prob + service_factor + strength_bonus
+    return round(max(15.0, min(85.0, estimated_prob)), 1)
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -103,6 +91,7 @@ def get_active_wta_tournaments():
         return []
 
 def fetch_single_match_odds(sport_key, match_id, p1, p2):
+    """Guarda las cuotas exactas tomadas para un partido específico."""
     url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/"
     params = {'apiKey': ODDS_API_KEY, 'regions': 'eu', 'markets': 'h2h'}
     try:
@@ -129,12 +118,14 @@ def fetch_single_match_odds(sport_key, match_id, p1, p2):
                     ''', (match_id, sport_key, p1, p2, p1_odds, p2_odds))
                     conn.commit()
                     conn.close()
-                    logging.info(f"SNAPSHOT T-5 GUARDADO [{sport_key}]: {p1} vs {p2} -> Odds: {p1_odds} / {p2_odds}")
+                    logging.info(f"SNAPSHOT REGISTRADO [{sport_key}]: {p1} vs {p2} -> Odds: {p1_odds} / {p2_odds}")
     except Exception as e:
-        logging.error(f"Error en snapshot T-5 para {match_id}: {e}")
+        logging.error(f"Error en snapshot para {match_id}: {e}")
 
 def schedule_wta_matches(scheduler):
+    """Busca partidos WTA, programa capturas a T-5 y ejecuta captura inmediata si falta menos de 5 min."""
     wta_tournaments = get_active_wta_tournaments()
+    
     for sport_key in wta_tournaments:
         url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/"
         params = {'apiKey': ODDS_API_KEY, 'regions': 'eu', 'markets': 'h2h'}
@@ -154,6 +145,7 @@ def schedule_wta_matches(scheduler):
                         t5_dt = commence_dt - timedelta(minutes=5)
                         
                         if t5_dt > now:
+                            # Caso normal: Faltan más de 5 min -> Agenda la tarea para T-5
                             scheduler.add_job(
                                 fetch_single_match_odds,
                                 'date',
@@ -164,6 +156,13 @@ def schedule_wta_matches(scheduler):
                             )
                             PREMATCH_CACHE[match_id] = True
                             logging.info(f"Programado snapshot T-5 para {p1} vs {p2} a las {t5_dt} UTC")
+                        
+                        elif now <= commence_dt:
+                            # CASO DE EMERGENCIA / ÚLTIMA HORA: Faltan menos de 5 min para el inicio -> Captura Inmediata
+                            logging.info(f"CAPTURA INMEDIATA (Partidos urgentes): {p1} vs {p2}")
+                            fetch_single_match_odds(sport_key, match_id, p1, p2)
+                            PREMATCH_CACHE[match_id] = True
+
         except Exception as e:
             logging.error(f"Error al programar partidos para {sport_key}: {e}")
 
@@ -173,9 +172,11 @@ if __name__ == "__main__":
     scheduler = BackgroundScheduler()
     scheduler.start()
     
+    # Revisa torneos de la WTA cada 20 minutos
     scheduler.add_job(schedule_wta_matches, 'interval', minutes=20, args=[scheduler])
-    logging.info("Bot WTA con Cálculo de Probabilidad Activo.")
+    logging.info("Bot WTA (Revisión cada 20m + Captura Inmediata de Emergencia) Activo.")
     
+    # Programación/Ejecución inicial al arrancar
     schedule_wta_matches(scheduler)
     
     import http.server
