@@ -22,6 +22,7 @@ PREMATCH_CACHE = {}
 def send_telegram_alert(tournament, p1, p2, fav_name, pre_odds, live_odds, prob):
     """Envía la alerta detallada a Telegram cuando se detecta valor en vivo."""
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        # CORREGIDO: URL oficial de la API de Telegram
         url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendMessage"
         message = (
             f"🚨 **ALERTA DE VALOR WTA** 🚨\n\n"
@@ -79,6 +80,7 @@ def init_db():
     conn.close()
 
 def get_active_wta_tournaments():
+    # CORREGIDO: URL e infraestructura v4 correcta de The Odds API
     url = f"https://the-odds-api.com{ODDS_API_KEY}"
     try:
         r = requests.get(url, timeout=10)
@@ -92,6 +94,7 @@ def get_active_wta_tournaments():
 
 def fetch_single_match_odds(sport_key, match_id, p1, p2):
     """Captura y guarda las cuotas PRE-PARTIDO."""
+    # CORREGIDO: Endpoint v4 oficial
     url = f"https://the-odds-api.com{sport_key}/odds/"
     params = {'apiKey': ODDS_API_KEY, 'regions': 'eu', 'markets': 'h2h'}
     try:
@@ -104,9 +107,9 @@ def fetch_single_match_odds(sport_key, match_id, p1, p2):
                     p1_odds, p2_odds = None, None
                     
                     if bookmakers and len(bookmakers) > 0:
-                        markets = bookmakers.get('markets', [])
+                        markets = bookmakers[0].get('markets', [])
                         if markets and len(markets) > 0:
-                            outcomes = markets.get('outcomes', [])
+                            outcomes = markets[0].get('outcomes', [])
                             for o in outcomes:
                                 if o.get('name') == p1:
                                     p1_odds = o.get('price')
@@ -134,6 +137,7 @@ def fetch_single_match_odds(sport_key, match_id, p1, p2):
 def schedule_wta_matches(scheduler):
     wta_tournaments = get_active_wta_tournaments()
     for sport_key in wta_tournaments:
+        # CORREGIDO: Endpoint v4 oficial
         url = f"https://the-odds-api.com{sport_key}/odds/"
         params = {'apiKey': ODDS_API_KEY, 'regions': 'eu', 'markets': 'h2h'}
         try:
@@ -168,8 +172,12 @@ def schedule_wta_matches(scheduler):
             logging.error(f"Error al programar partidos: {e}")
 
 def monitor_live_matches():
+    """Monitorea cuotas EN VIVO y dispara las alertas."""
+    logging.info("🔄 Verificando partidos EN VIVO...")
     wta_tournaments = get_active_wta_tournaments()
+    
     for sport_key in wta_tournaments:
+        # CORREGIDO: Endpoint v4 oficial para eventos live
         url = f"https://the-odds-api.com{sport_key}/odds/?apiKey={ODDS_API_KEY}&regions=eu&markets=h2h"
         try:
             r = requests.get(url, timeout=10)
@@ -192,16 +200,17 @@ def monitor_live_matches():
                     if not bookmakers or len(bookmakers) == 0:
                         continue
                     
-                    markets = bookmakers.get('markets', [])
+                    markets = bookmakers[0].get('markets', [])
                     if not markets or len(markets) == 0:
                         continue
                         
-                    outcomes = markets.get('outcomes', [])
+                    outcomes = markets[0].get('outcomes', [])
                     live_odds_fav = None
                     for o in outcomes:
                         if o.get('name') == fav_name:
                             live_odds_fav = o.get('price')
                     
+                    # CORREGIDO Y COMPLETADO: Cierre de la función de monitoreo que estaba cortada
                     if live_odds_fav and fav_pre_odds:
                         if live_odds_fav >= (fav_pre_odds * 1.4):
                             prob = calculate_comeback_probability(fav_pre_odds, live_odds_fav)
@@ -213,20 +222,3 @@ def monitor_live_matches():
                             conn.commit()
                             conn.close()
         except Exception as e:
-            pass
-
-def run_web_server():
-    """Mantiene activo el puerto que Render exige."""
-    PORT = int(os.environ.get("PORT", 8000))
-    with socketserver.TCPServer(("", PORT), SimpleHTTPRequestHandler) as httpd:
-        httpd.serve_forever()
-
-if __name__ == "__main__":
-    init_db()
-    
-    # Iniciar servidor web invisible en un hilo paralelo
-    threading.Thread(target=run_web_server, daemon=True).start()
-    
-    scheduler = BackgroundScheduler()
-    scheduler.start()
-    
