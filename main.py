@@ -2,7 +2,10 @@ import os
 import sqlite3
 import logging
 import requests
+import threading
 from datetime import datetime, timedelta
+from http.server import SimpleHTTPRequestHandler
+import socketserver
 from apscheduler.schedulers.background import BackgroundScheduler
 
 # --- CONFIGURACIÓN DE VARIABLES DE ENTORNO ---
@@ -45,7 +48,6 @@ def calculate_comeback_probability(pre_odds_fav, live_odds_fav):
         return 50.0
     
     base_prob = (1.0 / pre_odds_fav) * 100
-    
     strength_bonus = 0.0
     if pre_odds_fav <= 1.30:
         strength_bonus = 10.0
@@ -124,7 +126,7 @@ def fetch_single_match_odds(sport_key, match_id, p1, p2):
                     ''', (match_id, sport_key, p1, p2, p1_odds, p2_odds, fav_name, fav_pre_odds))
                     conn.commit()
                     conn.close()
-                    logging.info(f"💾 PRE-PARTIDO REGISTRADO [{sport_key}]: {p1} vs {p2} -> Favorita: {fav_name} ({fav_pre_odds})")
+                    logging.info(f"💾 PRE-PARTIDO REGISTRADO: {p1} vs {p2}")
     except Exception as e:
         logging.error(f"Error en snapshot para {match_id}: {e}")
 
@@ -158,18 +160,14 @@ def schedule_wta_matches(scheduler):
                                 replace_existing=True
                             )
                             PREMATCH_CACHE[match_id] = True
-                            logging.info(f"📅 Programado snapshot T-5 para {p1} vs {p2}")
                         elif now <= commence_dt:
                             fetch_single_match_odds(sport_key, match_id, p1, p2)
                             PREMATCH_CACHE[match_id] = True
         except Exception as e:
-            logging.error(f"Error al programar partidos para {sport_key}: {e}")
+            logging.error(f"Error al programar partidos: {e}")
 
 def monitor_live_matches():
-    """Monitorea cuotas EN VIVO y dispara las alertas."""
-    logging.info("🔄 Verificando partidos EN VIVO...")
     wta_tournaments = get_active_wta_tournaments()
-    
     for sport_key in wta_tournaments:
         url = f"https://the-odds-api.com{sport_key}/odds/?apiKey={ODDS_API_KEY}&regions=eu&markets=h2h"
         try:
@@ -214,13 +212,21 @@ def monitor_live_matches():
                             conn.commit()
                             conn.close()
         except Exception as e:
-            logging.error(f"Error en monitoreo en vivo para {sport_key}: {e}")
+            pass
+
+def run_web_server():
+    """Mantiene activo el puerto que Render exige."""
+    PORT = int(os.environ.get("PORT", 8000))
+    with socketserver.TCPServer(("", PORT), SimpleHTTPRequestHandler) as httpd:
+        httpd.serve_forever()
 
 if __name__ == "__main__":
     init_db()
     
+    # Iniciar servidor web invisible en un hilo paralelo
+    threading.Thread(target=run_web_server, daemon=True).start()
+    
     scheduler = BackgroundScheduler()
     scheduler.start()
     
-    scheduler.add_job(schedule_wta_matches, 'interval', minutes=30, args=[scheduler])
-Usa el código con precaución.scheduler.add_job(monitor_live_matches, 'interval', minutes=2)logging.info("🚀 Bot WTA Completo Activo con Escáner Live (Cada 2 min).")schedule_wta_matches(scheduler)monitor_live_matches()import http.serverimport socketserverPORT = int(os.environ.get("PORT", 8000))Handler = http.server.SimpleHTTPRequestHandlerwith socketserver.TCPServer(("", PORT), Handler) as httpd:httpd.serve_forever()
+Usa el código con precaución.scheduler.add_job(schedule_wta_matches, 'interval', minutes=30, args=[scheduler])scheduler.add_job(monitor_live_matches, 'interval', minutes=2)logging.info("🚀 Bot WTA Completo Activo con Escáner Live (Cada 2 min).")schedule_wta_matches(scheduler)monitor_live_matches()# Mantener el hilo principal vivoimport timewhile True:time.sleep(1)
