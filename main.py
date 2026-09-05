@@ -3,6 +3,7 @@ import sqlite3
 import logging
 import requests
 import threading
+import time
 from datetime import datetime, timedelta
 from http.server import SimpleHTTPRequestHandler
 import socketserver
@@ -103,9 +104,9 @@ def fetch_single_match_odds(sport_key, match_id, p1, p2):
                     p1_odds, p2_odds = None, None
                     
                     if bookmakers and len(bookmakers) > 0:
-                        markets = bookmakers[0].get('markets', [])
+                        markets = bookmakers.get('markets', [])
                         if markets and len(markets) > 0:
-                            outcomes = markets[0].get('outcomes', [])
+                            outcomes = markets.get('outcomes', [])
                             for o in outcomes:
                                 if o.get('name') == p1:
                                     p1_odds = o.get('price')
@@ -191,11 +192,11 @@ def monitor_live_matches():
                     if not bookmakers or len(bookmakers) == 0:
                         continue
                     
-                    markets = bookmakers[0].get('markets', [])
+                    markets = bookmakers.get('markets', [])
                     if not markets or len(markets) == 0:
                         continue
                         
-                    outcomes = markets[0].get('outcomes', [])
+                    outcomes = markets.get('outcomes', [])
                     live_odds_fav = None
                     for o in outcomes:
                         if o.get('name') == fav_name:
@@ -229,4 +230,3 @@ if __name__ == "__main__":
     scheduler = BackgroundScheduler()
     scheduler.start()
     
-Usa el código con precaución.scheduler.add_job(schedule_wta_matches, 'interval', minutes=30, args=[scheduler])scheduler.add_job(monitor_live_matches, 'interval', minutes=2)logging.info("🚀 Bot WTA Completo Activo con Escáner Live (Cada 2 min).")schedule_wta_matches(scheduler)monitor_live_matches()# Mantener el hilo principal vivoimport timewhile True:time.sleep(1)
