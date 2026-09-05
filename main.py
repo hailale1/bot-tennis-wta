@@ -5,19 +5,25 @@ import requests
 import threading
 import time
 from datetime import datetime, timedelta
-from http.server import SimpleHTTPRequestHandler
-import socketserver
+from flask import Flask
 from apscheduler.schedulers.background import BackgroundScheduler
 
-# --- CONFIGURACIÓN DE VARIABLES DE ENTORNO ---
+# --- CONFIGURACIÓN DE LOGS Y DISPOSITIVO ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 ODDS_API_KEY = os.getenv("ODDS_API_KEY", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
-
 DB_NAME = "wta_bot.db"
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 PREMATCH_CACHE = {}
+
+# --- SERVIDOR WEB FLASK (EXIGIDO POR RENDER) ---
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot WTA Activo y Monitoreando", 200
 
 def send_telegram_alert(tournament, p1, p2, fav_name, pre_odds, live_odds, prob):
     """Envía la alerta detallada a Telegram cuando se detecta valor en vivo."""
@@ -44,17 +50,10 @@ def send_telegram_alert(tournament, p1, p2, fav_name, pre_odds, live_odds, prob)
             logging.error(f"❌ Error al enviar alerta a Telegram: {e}")
 
 def calculate_comeback_probability(pre_odds_fav, live_odds_fav):
-    """Calcula la probabilidad estimada basándose puramente en las cuotas."""
     if not pre_odds_fav or pre_odds_fav <= 1.0:
         return 50.0
-    
     base_prob = (1.0 / pre_odds_fav) * 100
-    strength_bonus = 0.0
-    if pre_odds_fav <= 1.30:
-        strength_bonus = 10.0
-    elif pre_odds_fav <= 1.60:
-        strength_bonus = 5.0
-
+    strength_bonus = 10.0 if pre_odds_fav <= 1.30 else (5.0 if pre_odds_fav <= 1.60 else 0.0)
     live_drop_factor = (pre_odds_fav / live_odds_fav) * 10
     estimated_prob = base_prob + strength_bonus - (10 - live_drop_factor)
     return round(max(10.0, min(90.0, estimated_prob)), 1)
@@ -91,7 +90,6 @@ def get_active_wta_tournaments():
         return []
 
 def fetch_single_match_odds(sport_key, match_id, p1, p2):
-    """Captura y guarda las cuotas PRE-PARTIDO."""
     url = f"https://the-odds-api.com{sport_key}/odds/"
     params = {'apiKey': ODDS_API_KEY, 'regions': 'eu', 'markets': 'h2h'}
     try:
@@ -102,32 +100,27 @@ def fetch_single_match_odds(sport_key, match_id, p1, p2):
                 if m.get('id') == match_id:
                     bookmakers = m.get('bookmakers', [])
                     p1_odds, p2_odds = None, None
-                    
                     if bookmakers and len(bookmakers) > 0:
                         markets = bookmakers[0].get('markets', [])
                         if markets and len(markets) > 0:
                             outcomes = markets[0].get('outcomes', [])
                             for o in outcomes:
-                                if o.get('name') == p1:
-                                    p1_odds = o.get('price')
-                                elif o.get('name') == p2:
-                                    p2_odds = o.get('price')
+                                if o.get('name') == p1: p1_odds = o.get('price')
+                                elif o.get('name') == p2: p2_odds = o.get('price')
                     
                     if p1_odds and p2_odds:
                         fav_name = p1 if p1_odds < p2_odds else p2
                         fav_pre_odds = p1_odds if p1_odds < p2_odds else p2_odds
-                    else:
-                        fav_name, fav_pre_odds = None, None
-
-                    conn = sqlite3.connect(DB_NAME)
-                    cursor = conn.cursor()
-                    cursor.execute('''
-                        INSERT OR REPLACE INTO wta_matches (match_id, tournament, player_1, player_2, p1_pre_odds, p2_pre_odds, fav_name, fav_pre_odds)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (match_id, sport_key, p1, p2, p1_odds, p2_odds, fav_name, fav_pre_odds))
-                    conn.commit()
-                    conn.close()
-                    logging.info(f"💾 PRE-PARTIDO REGISTRADO: {p1} vs {p2}")
+                        
+                        conn = sqlite3.connect(DB_NAME)
+                        cursor = conn.cursor()
+                        cursor.execute('''
+                            INSERT OR REPLACE INTO wta_matches (match_id, tournament, player_1, player_2, p1_pre_odds, p2_pre_odds, fav_name, fav_pre_odds)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (match_id, sport_key, p1, p2, p1_odds, p2_odds, fav_name, fav_pre_odds))
+                        conn.commit()
+                        conn.close()
+                        logging.info(f"💾 PRE-PARTIDO REGISTRADO: {p1} vs {p2}")
     except Exception as e:
         logging.error(f"Error en snapshot para {match_id}: {e}")
 
@@ -152,14 +145,7 @@ def schedule_wta_matches(scheduler):
                         t5_dt = commence_dt - timedelta(minutes=5)
                         
                         if t5_dt > now:
-                            scheduler.add_job(
-                                fetch_single_match_odds,
-                                'date',
-                                run_date=t5_dt,
-                                args=[sport_key, match_id, p1, p2],
-                                id=f"t5_{match_id}",
-                                replace_existing=True
-                            )
+                            scheduler.add_job(fetch_single_match_odds, 'date', run_date=t5_dt, args=[sport_key, match_id, p1, p2], id=f"t5_{match_id}", replace_existing=True)
                             PREMATCH_CACHE[match_id] = True
                         elif now <= commence_dt:
                             fetch_single_match_odds(sport_key, match_id, p1, p2)
@@ -168,65 +154,64 @@ def schedule_wta_matches(scheduler):
             logging.error(f"Error al programar partidos: {e}")
 
 def monitor_live_matches():
-    """Monitorea cuotas EN VIVO y dispara las alertas."""
     logging.info("🔄 Verificando partidos EN VIVO...")
     wta_tournaments = get_active_wta_tournaments()
-    
     for sport_key in wta_tournaments:
         url = f"https://the-odds-api.com{sport_key}/odds/?apiKey={ODDS_API_KEY}&regions=eu&markets=h2h"
         try:
             r = requests.get(url, timeout=10)
-            if r.status_code != 200:
-                continue
-            
-            live_matches = r.json()
-            for match in live_matches:
-                match_id = match.get('id')
-                
-                conn = sqlite3.connect(DB_NAME)
-                cursor = conn.cursor()
-                cursor.execute("SELECT tournament, player_1, player_2, fav_name, fav_pre_odds FROM wta_matches WHERE match_id=?", (match_id,))
-                db_data = cursor.fetchone()
-                conn.close()
-                
-                if db_data:
-                    tournament, p1, p2, fav_name, fav_pre_odds = db_data
-                    bookmakers = match.get('bookmakers', [])
-                    if not bookmakers or len(bookmakers) == 0:
-                        continue
+            if r.status_code == 200:
+                live_matches = r.json()
+                for match in live_matches:
+                    match_id = match.get('id')
                     
-                    markets = bookmakers[0].get('markets', [])
-                    if not markets or len(markets) == 0:
-                        continue
-                        
-                    outcomes = markets[0].get('outcomes', [])
-                    live_odds_fav = None
-                    for o in outcomes:
-                        if o.get('name') == fav_name:
-                            live_odds_fav = o.get('price')
+                    conn = sqlite3.connect(DB_NAME)
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT tournament, player_1, player_2, fav_name, fav_pre_odds FROM wta_matches WHERE match_id=?", (match_id,))
+                    db_data = cursor.fetchone()
+                    conn.close()
                     
-                    if live_odds_fav and fav_pre_odds:
-                        if live_odds_fav >= (fav_pre_odds * 1.4):
-                            prob = calculate_comeback_probability(fav_pre_odds, live_odds_fav)
-                            send_telegram_alert(tournament, p1, p2, fav_name, fav_pre_odds, live_odds_fav, prob)
-                            
-                            conn = sqlite3.connect(DB_NAME)
-                            cursor = conn.cursor()
-                            cursor.execute("DELETE FROM wta_matches WHERE match_id=?", (match_id,))
-                            conn.commit()
-                            conn.close()
+                    if db_data:
+                        tournament, p1, p2, fav_name, fav_pre_odds = db_data
+                        bookmakers = match.get('bookmakers', [])
+                        if bookmakers and len(bookmakers) > 0:
+                            markets = bookmakers[0].get('markets', [])
+                            if markets and len(markets) > 0:
+                                outcomes = markets[0].get('outcomes', [])
+                                live_odds_fav = None
+                                for o in outcomes:
+                                    if o.get('name') == fav_name: live_odds_fav = o.get('price')
+                                
+                                if live_odds_fav and fav_pre_odds:
+                                    if live_odds_fav >= (fav_pre_odds * 1.4):
+                                        prob = calculate_comeback_probability(fav_pre_odds, live_odds_fav)
+                                        send_telegram_alert(tournament, p1, p2, fav_name, fav_pre_odds, live_odds_fav, prob)
+                                        
+                                        conn = sqlite3.connect(DB_NAME)
+                                        cursor = conn.cursor()
+                                        cursor.execute("DELETE FROM wta_matches WHERE match_id=?", (match_id,))
+                                        conn.commit()
+                                        conn.close()
         except Exception as e:
             logging.error(f"Error en escaneo en vivo: {e}")
 
-def run_web_server():
-    """Mantiene activo el puerto que Render exige."""
-    PORT = int(os.environ.get("PORT", 10000))
-    with socketserver.TCPServer(("", PORT), SimpleHTTPRequestHandler) as httpd:
-        httpd.serve_forever()
-
-if __name__ == "__main__":
+def start_bot_logic():
     init_db()
+    scheduler = BackgroundScheduler()
+    scheduler.start()
+    scheduler.add_job(schedule_wta_matches, 'interval', minutes=30, args=[scheduler])
+    scheduler.add_job(monitor_live_matches, 'interval', minutes=2)
+    logging.info("🚀 Bot WTA Completo Activo con Escáner Live (Cada 2 min).")
+    schedule_wta_matches(scheduler)
+    monitor_live_matches()
+
+# --- HILO PRINCIPAL ---
+if __name__ == "__main__":
+    # Arrancar la lógica del bot en un hilo secundario
+    threading.Thread(target=start_bot_logic, daemon=True).start()
     
-    # Iniciar servidor web en un hilo paralelo
+    # Arrancar la app de Flask en el hilo principal usando las variables de Render
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
 
 
