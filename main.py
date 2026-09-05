@@ -189,7 +189,7 @@ def monitor_live_matches():
                 
                 if db_data:
                     tournament, p1, p2, fav_name, fav_pre_odds = db_data
-                    bookmakers = match.get('bookmakers', [])
+                    bookmakers = m.get('bookmakers', []) if 'm' in locals() else match.get('bookmakers', [])
                     if not bookmakers or len(bookmakers) == 0:
                         continue
                     
@@ -203,13 +203,11 @@ def monitor_live_matches():
                         if o.get('name') == fav_name:
                             live_odds_fav = o.get('price')
                     
-                    # DISPARAR ALERTA si la cuota en vivo sube al menos un 40% (Favorita perdiendo)
                     if live_odds_fav and fav_pre_odds:
                         if live_odds_fav >= (fav_pre_odds * 1.4):
                             prob = calculate_comeback_probability(fav_pre_odds, live_odds_fav)
                             send_telegram_alert(tournament, p1, p2, fav_name, fav_pre_odds, live_odds_fav, prob)
                             
-                            # Quitar de la DB para evitar spam repetitivo del mismo partido
                             conn = sqlite3.connect(DB_NAME)
                             cursor = conn.cursor()
                             cursor.execute("DELETE FROM wta_matches WHERE match_id=?", (match_id,))
@@ -221,4 +219,8 @@ def monitor_live_matches():
 if __name__ == "__main__":
     init_db()
     
-Usa el código con precaución.scheduler = BackgroundScheduler()scheduler.start()scheduler.add_job(schedule_wta_matches, 'interval', minutes=30, args=[scheduler])scheduler.add_job(monitor_live_matches, 'interval', minutes=2)logging.info("🚀 Bot WTA Completo Activo con Escáner Live (Cada 2 min).")schedule_wta_matches(scheduler)monitor_live_matches()import http.serverimport socketserverPORT = int(os.environ.get("PORT", 8000))Handler = http.server.SimpleHTTPRequestHandlerwith socketserver.TCPServer(("", PORT), Handler) as httpd:httpd.serve_forever()
+    scheduler = BackgroundScheduler()
+    scheduler.start()
+    
+    scheduler.add_job(schedule_wta_matches, 'interval', minutes=30, args=[scheduler])
+Usa el código con precaución.scheduler.add_job(monitor_live_matches, 'interval', minutes=2)logging.info("🚀 Bot WTA Completo Activo con Escáner Live (Cada 2 min).")schedule_wta_matches(scheduler)monitor_live_matches()import http.serverimport socketserverPORT = int(os.environ.get("PORT", 8000))Handler = http.server.SimpleHTTPRequestHandlerwith socketserver.TCPServer(("", PORT), Handler) as httpd:httpd.serve_forever()
