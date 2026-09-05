@@ -189,7 +189,7 @@ def monitor_live_matches():
                 
                 if db_data:
                     tournament, p1, p2, fav_name, fav_pre_odds = db_data
-                    bookmakers = m.get('bookmakers', []) if 'm' in locals() else match.get('bookmakers', [])
+                    bookmakers = match.get('bookmakers', [])
                     if not bookmakers or len(bookmakers) == 0:
                         continue
                     
