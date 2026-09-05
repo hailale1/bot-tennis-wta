@@ -104,9 +104,9 @@ def fetch_single_match_odds(sport_key, match_id, p1, p2):
                     p1_odds, p2_odds = None, None
                     
                     if bookmakers and len(bookmakers) > 0:
-                        markets = bookmakers.get('markets', [])
+                        markets = bookmakers[0].get('markets', [])
                         if markets and len(markets) > 0:
-                            outcomes = markets.get('outcomes', [])
+                            outcomes = markets[0].get('outcomes', [])
                             for o in outcomes:
                                 if o.get('name') == p1:
                                     p1_odds = o.get('price')
@@ -195,11 +195,11 @@ def monitor_live_matches():
                     if not bookmakers or len(bookmakers) == 0:
                         continue
                     
-                    markets = bookmakers.get('markets', [])
+                    markets = bookmakers[0].get('markets', [])
                     if not markets or len(markets) == 0:
                         continue
                         
-                    outcomes = markets.get('outcomes', [])
+                    outcomes = markets[0].get('outcomes', [])
                     live_odds_fav = None
                     for o in outcomes:
                         if o.get('name') == fav_name:
@@ -220,13 +220,13 @@ def monitor_live_matches():
 
 def run_web_server():
     """Mantiene activo el puerto que Render exige."""
-    PORT = int(os.environ.get("PORT", 8000))
+    PORT = int(os.environ.get("PORT", 10000))
     with socketserver.TCPServer(("", PORT), SimpleHTTPRequestHandler) as httpd:
         httpd.serve_forever()
 
 if __name__ == "__main__":
     init_db()
     
-    threading.Thread(target=run_web_server, daemon=True).start()
-    
+    # Iniciar servidor web en un hilo paralelo
+
 
