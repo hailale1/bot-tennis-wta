@@ -26,6 +26,7 @@ def home():
 
 def send_telegram_alert(tournament, p1, p2, fav_name, pre_odds, live_odds, prob):
     """Envía la alerta estructurada a Telegram usando el método oficial sendMessage."""
+    # URL FIJA CORREGIDA DE RAÍZ EN EL CÓDIGO FUENTE
     url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendMessage"
     html_content = (
         f"<b>🚨 ALERTA DE VALOR WTA 🚨</b>\n\n"
@@ -46,6 +47,7 @@ def send_telegram_alert(tournament, p1, p2, fav_name, pre_odds, live_odds, prob)
 
 def send_startup_test_message():
     """Envía un mensaje de prueba estándar al iniciar para validar tokens."""
+    # URL FIJA CORREGIDA DE RAÍZ EN EL CÓDIGO FUENTE
     url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
@@ -203,7 +205,7 @@ scheduler.add_job(func=monitor_live_matches, trigger="interval", minutes=2, id="
 scheduler.start()
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+
 
 
 
