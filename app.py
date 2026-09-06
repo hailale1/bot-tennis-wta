@@ -1,86 +1,202 @@
 import os
+import sqlite3
+import logging
 import requests
+from datetime import datetime, timedelta
 from flask import Flask
 from apscheduler.schedulers.background import BackgroundScheduler
 
+# --- CONFIGURACIÓN DE LOGS Y VARIABLES DE ENTORNO ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+ODDS_API_KEY = os.getenv("ODDS_API_KEY", "").strip()
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+DB_NAME = "wta_bot.db"
+
+PREMATCH_CACHE = {}
 app = Flask(__name__)
 
-# ========================================================
-# CONEXIÓN DE APIS MEDIANTE VARIABLES DE ENTRORNO (RENDER)
-# ========================================================
-# Se obtienen de forma limpia desde la pestaña 'Environment' de Render
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-ODDS_API_KEY = os.environ.get("ODDS_API_KEY")
-
-def verificar_telegram():
-    """Verifica la conexión con Telegram estructurando la URL de forma correcta."""
-    if not TELEGRAM_TOKEN:
-        print("❌ ERROR: No se encontró la variable 'TELEGRAM_TOKEN' en el Environment de Render.")
-        return
-
-    # Corrección estructural: se añade el subdominio 'api.' y el prefijo '/bot'
-    url_telegram = f"https://telegram.org{TELEGRAM_TOKEN}/sendMessage"
-    
-    payload = {
-        "chat_id": "REMPLAZA_CON_TU_CHAT_ID",  # Coloca aquí tu ID de chat si envías un mensaje inicial
-        "text": "🤖 Servidor Flask iniciado correctamente y conectado a Telegram."
-    }
-    
-    try:
-        print("Verificando conexión con la API de Telegram...")
-        # Hacemos la petición de prueba a la URL corregida
-        requests.post(url_telegram, json=payload, timeout=10)
-    except Exception as e:
-        print(f"❌ No se pudo conectar con Telegram para la prueba: {e}")
-
-def monitor_live_matches():
-    """Tarea programada que revisa los partidos en vivo."""
-    print("🔄 Verificando partidos EN VIVO circuito WTA...")
-    
-    if not ODDS_API_KEY:
-        print("❌ ERROR: No se encontró la variable 'ODDS_API_KEY' en el Environment de Render.")
-        return
-
-    # Corrección de URL: Se define el host limpio sin añadirle texto directamente al dominio
-    url_odds = "https://the-odds-api.com"
-    
-    # Enviamos la API Key de forma segura encapsulada como parámetro URL (?apiKey=...)
-    params = {
-        "apiKey": ODDS_API_KEY
-    }
-    
-    try:
-        response = requests.get(url_odds, params=params, timeout=15)
-        response.raise_for_status()  # Valida que el servidor responda con estado 200 OK
-        data = response.json()
-        print("✅ Torneos obtenidos exitosamente de The Odds API.")
-        
-        # Aquí puedes procesar los datos 'data' según los requiera tu aplicación...
-        
-    except Exception as e:
-        print(f"❌ ERROR - Error obteniendo torneos: {e}")
-
-# ==========================================
-# CONFIGURACIÓN DEL PROGRAMADOR (SCHEDULER)
-# ==========================================
-scheduler = BackgroundScheduler()
-# Ejecuta la tarea en segundo plano cada 2 minutos (coincidiendo con tus logs)
-scheduler.add_job(monitor_live_matches, 'interval', minutes=2, id='monitor_live_matches')
-scheduler.start()
-
-# Ejecutar validación de Telegram al inicializar el proceso
-verificar_telegram()
-
-# ==========================================
-# RUTA PRINCIPAL DE FLASK
-# ==========================================
 @app.route('/')
 def home():
-    return "Your service is live and monitoring WTA matches!"
+    return "Bot WTA Activo y Escaneando el Circuito en Vivo", 200
 
-if __name__ == '__main__':
-    # Render maneja puertos dinámicos. Usamos el asignado o el 10000 por defecto.
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+def send_telegram_alert(tournament, p1, p2, fav_name, pre_odds, live_odds, prob):
+    """Envía la alerta estructurada a Telegram usando el método oficial sendMessage."""
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        # CORREGIDO: Ruta de producción oficial para el envío de mensajes
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        
+        # CORREGIDO: El formateo HTML nativo de Telegram usa saltos de línea (\n), no etiquetas <br>
+        html_content = (
+            f"<b>🚨 ALERTA DE VALOR WTA 🚨</b>\n\n"
+            f"🏆 <b>Torneo:</b> {tournament.replace('_', ' ').upper()}\n"
+            f"🎾 <b>Partido:</b> {p1} vs {p2}\n"
+            f"⭐ <b>Favorita en Apuros:</b> {fav_name}\n\n"
+            f"📊 <b>Comparativa de Cuotas:</b>\n"
+            f"• Cuota Pre-Partido: {pre_odds}\n"
+            f"• Cuota en Vivo Actual: {live_odds}\n\n"
+            f"🎯 <b>Probabilidad de Remontada:</b> {prob}%"
+        )
+        
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": html_content,
+            "parse_mode": "HTML"
+        }
+        try:
+            r = requests.post(url, json=payload, timeout=10)
+            logging.info(f"Intento de envío de alerta. Código de respuesta Telegram: {r.status_code}")
+        except Exception as e:
+            logging.error(f"Error al conectar con Telegram: {e}")
+
+def send_startup_test_message():
+    """Envía un mensaje de prueba estándar al iniciar para validar tokens."""
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": "<b>✅ Bot WTA Iniciado Correctamente</b>\nLa conexión con Telegram es exitosa mediante la API de producción. El escáner de cuotas ya está corriendo en segundo plano.",
+            "parse_mode": "HTML"
+        }
+        try:
+            r = requests.post(url, json=payload, timeout=10)
+            if r.status_code == 200:
+                logging.info("🚀 ¡Mensaje de prueba enviado con éxito a Telegram!")
+            else:
+                logging.error(f"❌ Error en mensaje de prueba. Código: {r.status_code} - Verifique si el Bot está dentro del canal/chat.")
+        except Exception as e:
+            logging.error(f"❌ No se pudo conectar con Telegram para la prueba: {e}")
+
+def calculate_comeback_probability(pre_odds_fav, live_odds_fav):
+    if not pre_odds_fav or pre_odds_fav <= 1.0: return 50.0
+    base_prob = (1.0 / pre_odds_fav) * 100
+    strength_bonus = 10.0 if pre_odds_fav <= 1.30 else (5.0 if pre_odds_fav <= 1.60 else 0.0)
+    live_drop_factor = (pre_odds_fav / live_odds_fav) * 10
+    estimated_prob = base_prob + strength_bonus - (10 - live_drop_factor)
+    return round(max(10.0, min(90.0, estimated_prob)), 1)
+
+def init_db():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS wta_matches (
+            match_id TEXT PRIMARY KEY, tournament TEXT, player_1 TEXT, player_2 TEXT,
+            p1_pre_odds REAL, p2_pre_odds REAL, fav_name TEXT, fav_pre_odds REAL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def get_active_wta_tournaments():
+    # CORREGIDO: Ruta URL oficial v4 para consultar los deportes en The Odds API
+    url = f"https://the-odds-api.com{ODDS_API_KEY}"
+    try:
+        r = requests.get(url, timeout=10)
+        if r.status_code == 200:
+            return [s['key'] for s in r.json() if 'tennis_wta' in s['key']]
+        return []
+    except Exception as e:
+        logging.error(f"Error obteniendo torneos: {e}")
+        return []
+
+def fetch_single_match_odds(sport_key, match_id, p1, p2):
+    # CORREGIDO: Ruta URL estructurada oficial v4
+    url = f"https://the-odds-api.com{sport_key}/odds/"
+    params = {'apiKey': ODDS_API_KEY, 'regions': 'eu', 'markets': 'h2h'}
+    try:
+        r = requests.get(url, params=params, timeout=10)
+        if r.status_code == 200:
+            for m in r.json():
+                if m.get('id') == match_id:
+                    bookmakers = m.get('bookmakers', [])
+                    p1_odds, p2_odds = None, None
+                    if bookmakers and len(bookmakers) > 0:
+                        # CORREGIDO: Desglose seguro tratando a 'bookmakers' como lista
+                        for bookmaker in bookmakers:
+                            markets = bookmaker.get('markets', [])
+                            if markets and len(markets) > 0:
+                                for o in markets[0].get('outcomes', []):
+                                    if o.get('name') == p1: p1_odds = o.get('price')
+                                    elif o.get('name') == p2: p2_odds = o.get('price')
+                                break
+                    
+                    if p1_odds and p2_odds:
+                        fav_name = p1 if p1_odds < p2_odds else p2
+                        fav_pre_odds = p1_odds if p1_odds < p2_odds else p2_odds
+                        conn = sqlite3.connect(DB_NAME)
+                        cursor = conn.cursor()
+                        cursor.execute('''
+                            INSERT OR REPLACE INTO wta_matches (match_id, tournament, player_1, player_2, p1_pre_odds, p2_pre_odds, fav_name, fav_pre_odds)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (match_id, sport_key, p1, p2, p1_odds, p2_odds, fav_name, fav_pre_odds))
+                        conn.commit()
+                        conn.close()
+                        logging.info(f"💾 PRE-PARTIDO REGISTRADO: {p1} vs {p2}")
+    except Exception as e:
+        logging.error(f"Error en snapshot pre-partido: {e}")
+
+def schedule_wta_matches(scheduler):
+    wta_tournaments = get_active_wta_tournaments()
+    for sport_key in wta_tournaments:
+        url = f"https://the-odds-api.com{sport_key}/odds/"
+        params = {'apiKey': ODDS_API_KEY, 'regions': 'eu', 'markets': 'h2h'}
+        try:
+            r = requests.get(url, params=params, timeout=10)
+            if r.status_code == 200:
+                now = datetime.utcnow()
+                for match in r.json():
+                    match_id = match.get('id')
+                    p1 = match.get('home_team')
+                    p2 = match.get('away_team')
+                    commence_str = match.get('commence_time')
+                    if commence_str and match_id not in PREMATCH_CACHE:
+                        commence_dt = datetime.strptime(commence_str, "%Y-%m-%dT%H:%M:%SZ")
+                        t5_dt = commence_dt - timedelta(minutes=5)
+                        if t5_dt > now:
+                            scheduler.add_job(fetch_single_match_odds, 'date', run_date=t5_dt, args=[sport_key, match_id, p1, p2], id=f"t5_{match_id}", replace_existing=True)
+                            PREMATCH_CACHE[match_id] = True
+                        elif now <= commence_dt:
+                            fetch_single_match_odds(sport_key, match_id, p1, p2)
+                            PREMATCH_CACHE[match_id] = True
+        except Exception as e:
+            logging.error(f"Error al programar cartelera: {e}")
+
+def monitor_live_matches():
+    """Escáner real del circuito WTA en directo."""
+    logging.info("🔄 Verificando partidos EN VIVO circuito WTA...")
+    wta_tournaments = get_active_wta_tournaments()
+    for sport_key in wta_tournaments:
+        url = f"https://the-odds-api.com{sport_key}/odds/?apiKey={ODDS_API_KEY}&regions=eu&markets=h2h"
+        try:
+            r = requests.get(url, timeout=10)
+            if r.status_code == 200:
+                for match in r.json():
+                    match_id = match.get('id')
+                    conn = sqlite3.connect(DB_NAME)
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT tournament, player_1, player_2, fav_name, fav_pre_odds FROM wta_matches WHERE match_id=?", (match_id,))
+                    db_data = cursor.fetchone()
+                    conn.close()
+                    
+                    if db_data:
+                        tournament, p1, p2, fav_name, fav_pre_odds = db_data
+                        bookmakers = match.get('bookmakers', [])
+                        if bookmakers and len(bookmakers) > 0:
+                            live_odds_fav = None
+                            for bookmaker in bookmakers:
+                                markets = bookmaker.get('markets', [])
+                                if markets and len(markets) > 0:
+                                    for o in markets[0].get('outcomes', []):
+                                        if o.get('name') == fav_name: 
+                                            live_odds_fav = o.get('price')
+                                    break
+                                
+                                if live_odds_fav and fav_pre_odds:
+                                    if live_odds_fav >= (fav_pre_odds * 1.4):
+                                        prob = calculate_comeback_probability(fav_pre_odds, live_odds_fav)
+                                        send_telegram_alert(tournament, p1, p2, fav_name, fav_pre_odds, live_odds_fav, prob)
+
 
 
