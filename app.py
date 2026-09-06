@@ -22,7 +22,6 @@ def home():
 
 def send_telegram_alert(tournament, p1, p2, fav_name, pre_odds, live_odds, prob):
     """Envía la alerta estructurada a Telegram usando el enlace real unificado."""
-    # URL 100% FIJA E INYECTADA MANUALMENTE CON TU TOKEN REAL
     url = "https://telegram.org"
     
     html_content = (
@@ -35,7 +34,6 @@ def send_telegram_alert(tournament, p1, p2, fav_name, pre_odds, live_odds, prob)
         f"• Cuota en Vivo Actual: {live_odds}\n\n"
         f"🎯 <b>Probabilidad de Remontada:</b> {prob}%"
     )
-    # CHAT_ID FIJO INYECTADO MANUALMENTE CON TU IDENTIFICADOR REAL
     payload = {"chat_id": "484236900", "text": html_content, "parse_mode": "HTML"}
     try:
         r = requests.post(url, json=payload, timeout=10)
@@ -45,7 +43,6 @@ def send_telegram_alert(tournament, p1, p2, fav_name, pre_odds, live_odds, prob)
 
 def send_startup_test_message():
     """Envía un mensaje de prueba estándar al iniciar usando el enlace real unificado."""
-    # URL 100% FIJA E INYECTADA MANUALMENTE CON TU TOKEN REAL
     url = "https://telegram.org"
     payload = {
         "chat_id": "484236900",
@@ -203,5 +200,4 @@ scheduler.add_job(func=monitor_live_matches, trigger="interval", minutes=2, id="
 scheduler.start()
 
 if __name__ == '__main__':
-
-app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
