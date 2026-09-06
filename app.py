@@ -24,7 +24,7 @@ def home():
 def send_telegram_alert(tournament, p1, p2, fav_name, pre_odds, live_odds, prob):
     """Envía la alerta estructurada a Telegram usando la API oficial v10."""
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendRichMessage"
+        url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendMessage"
         
         html_content = (
             f"<b>🚨 ALERTA DE VALOR WTA 🚨</b>\n\n"
@@ -205,4 +205,5 @@ scheduler.start()
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+
 
