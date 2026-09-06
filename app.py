@@ -46,7 +46,7 @@ def send_telegram_alert(tournament, p1, p2, fav_name, pre_odds, live_odds, prob)
 
 def send_startup_test_message():
     """Envía un mensaje de prueba estándar al iniciar para validar tokens."""
-    url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendMessage"
+   url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": "<b>✅ Bot WTA Iniciado Correctamente</b>\nEl escáner de cuotas ya está corriendo en segundo plano sin depender de variables externas de Render.",
