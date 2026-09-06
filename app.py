@@ -9,7 +9,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 # --- CONFIGURACIÓN DE LOGS ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# CREDENCIALES FORZADAS DIRECTAMENTE EN EL CÓDIGO (CORREGIDO)
+# CREDENCIALES FORZADAS DIRECTAMENTE EN EL CÓDIGO
 TELEGRAM_BOT_TOKEN = "8826075554:AAG4YXvMl0H85aX2PxD7PuS0vfW70BRpeto"
 TELEGRAM_CHAT_ID = "484236900"
 
@@ -204,6 +204,5 @@ scheduler.start()
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
-
 
 
