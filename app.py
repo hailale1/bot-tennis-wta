@@ -26,7 +26,6 @@ def home():
 
 def send_telegram_alert(tournament, p1, p2, fav_name, pre_odds, live_odds, prob):
     """Envía la alerta estructurada a Telegram usando el método oficial sendMessage."""
-    # URL CORREGIDA NATIVA DE TELEGRAM
     url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendMessage"
     html_content = (
         f"<b>🚨 ALERTA DE VALOR WTA 🚨</b>\n\n"
@@ -47,7 +46,6 @@ def send_telegram_alert(tournament, p1, p2, fav_name, pre_odds, live_odds, prob)
 
 def send_startup_test_message():
     """Envía un mensaje de prueba estándar al iniciar para validar tokens."""
-    # URL CORREGIDA NATIVA DE TELEGRAM
     url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
@@ -88,7 +86,6 @@ def get_active_wta_tournaments():
     if not ODDS_API_KEY: 
         logging.error("Falta la variable ODDS_API_KEY en Render")
         return []
-    # URL CORREGIDA v4 OFICIAL PARA THE ODDS API
     url = f"https://the-odds-api.com{ODDS_API_KEY}"
     try:
         r = requests.get(url, timeout=10)
@@ -100,7 +97,6 @@ def get_active_wta_tournaments():
         return []
 
 def fetch_single_match_odds(sport_key, match_id, p1, p2):
-    # URL CORREGIDA v4 OFICIAL PARA THE ODDS API
     url = f"https://the-odds-api.com{sport_key}/odds/"
     params = {'apiKey': ODDS_API_KEY, 'regions': 'eu', 'markets': 'h2h'}
     try:
@@ -114,10 +110,10 @@ def fetch_single_match_odds(sport_key, match_id, p1, p2):
                         for bookmaker in bookmakers:
                             markets = bookmaker.get('markets', [])
                             if markets and len(markets) > 0:
-                                        for o in markets.get('outcomes', []):
-                                            if o.get('name') == p1: p1_odds = o.get('price')
-                                            elif o.get('name') == p2: p2_odds = o.get('price')
-                                        break
+                                for o in markets.get('outcomes', []):
+                                    if o.get('name') == p1: p1_odds = o.get('price')
+                                    elif o.get('name') == p2: p2_odds = o.get('price')
+                                break
                     
                     if p1_odds and p2_odds:
                         fav_name = p1 if p1_odds < p2_odds else p2
@@ -137,7 +133,6 @@ def fetch_single_match_odds(sport_key, match_id, p1, p2):
 def schedule_wta_matches(scheduler):
     wta_tournaments = get_active_wta_tournaments()
     for sport_key in wta_tournaments:
-        # URL CORREGIDA v4 OFICIAL PARA THE ODDS API
         url = f"https://the-odds-api.com{sport_key}/odds/"
         params = {'apiKey': ODDS_API_KEY, 'regions': 'eu', 'markets': 'h2h'}
         try:
@@ -166,7 +161,6 @@ def monitor_live_matches():
     logging.info("🔄 Verificando partidos EN VIVO circuito WTA...")
     wta_tournaments = get_active_wta_tournaments()
     for sport_key in wta_tournaments:
-        # URL CORREGIDA v4 OFICIAL PARA THE ODDS API
         url = f"https://the-odds-api.com{sport_key}/odds/?apiKey={ODDS_API_KEY}&regions=eu&markets=h2h"
         try:
             r = requests.get(url, timeout=10)
@@ -204,9 +198,12 @@ init_db()
 send_startup_test_message()
 
 scheduler = BackgroundScheduler()
+scheduler.add_job(func=lambda: schedule_wta_matches(scheduler), trigger="interval", minutes=60, id="cartelera")
+scheduler.add_job(func=monitor_live_matches, trigger="interval", minutes=2, id="monitoreo")
+scheduler.start()
 
-scheduler.add_job(func=lambda: schedule_wta_matches(scheduler), trigger="interval", minutes=60, id="cartelera")scheduler.add_job(func=monitor_live_matches, trigger="interval", minutes=2, id="monitoreo")scheduler.start()if name == 'main':app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
-
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
 
 
 
