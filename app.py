@@ -205,4 +205,12 @@ send_startup_test_message()
 
 scheduler = BackgroundScheduler()
 
+scheduler = BackgroundScheduler()
+scheduler.add_job(func=lambda: schedule_wta_matches(scheduler), trigger="interval", minutes=60, id="cartelera")
+scheduler.add_job(func=monitor_live_matches, trigger="interval", minutes=2, id="monitoreo")
+scheduler.start()
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+
 
