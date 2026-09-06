@@ -9,32 +9,32 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 app = Flask(__name__)
 
 def send_telegram_alert():
-    """Envía la alerta utilizando formato MarkdownV2 limpio para evitar bloqueos de la API."""
+    """Envía la alerta detallada de tenis usando el formato HTML v10 oficial."""
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
         url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendRichMessage"
         
-        # Formato Markdown puro y limpio exigido por la API de Telegram v10
-        markdown_content = (
-            "🚨 *ALERTA DE VALOR WTA (TEST)* 🚨\n\n"
-            "🏆 *Torneo:* WTA 1000 MADRID Open\n"
-            "🎾 *Partido:* Paula Badosa vs Coco Gauff\n"
-            "⭐ *Favorita en Apuros:* Paula Badosa\n\n"
-            "📊 *Comparativa de Cuotas:*\n"
-            "• Cuota Pre-Partido: `1.45`\n"
-            "• Cuota en Vivo Actual: `2.62` _(Favorita perdiendo)_ \n\n"
-            "🎯 *Probabilidad de Remontada:* *78.4%*"
+        # Formato HTML v10 limpio y compatible con puntos, guiones y emojis
+        html_content = (
+            "<b>🚨 ALERTA DE VALOR WTA (TEST) 🚨</b><br><br>"
+            "🏆 <b>Torneo:</b> WTA 1000 MADRID Open<br>"
+            "🎾 <b>Partido:</b> Paula Badosa vs Coco Gauff<br>"
+            "⭐ <b>Favorita en Apuros:</b> Paula Badosa<br><br>"
+            "📊 <b>Comparativa de Cuotas:</b><br>"
+            "• Cuota Pre-Partido: 1.45<br>"
+            "• Cuota en Vivo Actual: 2.62 <i>(Favorita perdiendo)</i><br><br>"
+            "🎯 <b>Probabilidad de Remontada:</b> 78.4%"
         )
         
         payload = {
             "chat_id": TELEGRAM_CHAT_ID,
             "rich_message": {
-                "markdown": markdown_content
+                "html": html_content
             }
         }
         
         try:
             r = requests.post(url, json=payload, timeout=10)
-            print(f"Resultado del envío Markdown: {r.status_code} - {r.text}")
+            print(f"Resultado del envío API v10: {r.status_code} - {r.text}")
         except Exception as e:
             print(f"Error de red: {e}")
 
