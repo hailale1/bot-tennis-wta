@@ -1,3 +1,7 @@
+git add app.py
+git commit -m "fix: corregir lectura de variables de entorno de telegram y odds api"
+git push origin main
+
 import os
 import sqlite3
 import logging
