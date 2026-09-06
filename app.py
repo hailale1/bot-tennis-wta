@@ -1,7 +1,3 @@
-git add app.py
-git commit -m "fix: corregir lectura de variables de entorno de telegram y odds api"
-git push origin main
-
 import os
 import sqlite3
 import logging
@@ -28,10 +24,8 @@ def home():
 def send_telegram_alert(tournament, p1, p2, fav_name, pre_odds, live_odds, prob):
     """Envía la alerta estructurada a Telegram usando el método oficial sendMessage."""
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        # CORREGIDO: Ruta de producción oficial para el envío de mensajes
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendMessage"
         
-        # CORREGIDO: El formateo HTML nativo de Telegram usa saltos de línea (\n), no etiquetas <br>
         html_content = (
             f"<b>🚨 ALERTA DE VALOR WTA 🚨</b>\n\n"
             f"🏆 <b>Torneo:</b> {tournament.replace('_', ' ').upper()}\n"
@@ -57,7 +51,7 @@ def send_telegram_alert(tournament, p1, p2, fav_name, pre_odds, live_odds, prob)
 def send_startup_test_message():
     """Envía un mensaje de prueba estándar al iniciar para validar tokens."""
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendMessage"
         payload = {
             "chat_id": TELEGRAM_CHAT_ID,
             "text": "<b>✅ Bot WTA Iniciado Correctamente</b>\nLa conexión con Telegram es exitosa mediante la API de producción. El escáner de cuotas ya está corriendo en segundo plano.",
@@ -94,7 +88,6 @@ def init_db():
     conn.close()
 
 def get_active_wta_tournaments():
-    # CORREGIDO: Ruta URL oficial v4 para consultar los deportes en The Odds API
     url = f"https://the-odds-api.com{ODDS_API_KEY}"
     try:
         r = requests.get(url, timeout=10)
@@ -106,7 +99,6 @@ def get_active_wta_tournaments():
         return []
 
 def fetch_single_match_odds(sport_key, match_id, p1, p2):
-    # CORREGIDO: Ruta URL estructurada oficial v4
     url = f"https://the-odds-api.com{sport_key}/odds/"
     params = {'apiKey': ODDS_API_KEY, 'regions': 'eu', 'markets': 'h2h'}
     try:
@@ -117,11 +109,10 @@ def fetch_single_match_odds(sport_key, match_id, p1, p2):
                     bookmakers = m.get('bookmakers', [])
                     p1_odds, p2_odds = None, None
                     if bookmakers and len(bookmakers) > 0:
-                        # CORREGIDO: Desglose seguro tratando a 'bookmakers' como lista
                         for bookmaker in bookmakers:
                             markets = bookmaker.get('markets', [])
                             if markets and len(markets) > 0:
-                                for o in markets[0].get('outcomes', []):
+                                for o in markets.get('outcomes', []):
                                     if o.get('name') == p1: p1_odds = o.get('price')
                                     elif o.get('name') == p2: p2_odds = o.get('price')
                                 break
@@ -192,15 +183,25 @@ def monitor_live_matches():
                             for bookmaker in bookmakers:
                                 markets = bookmaker.get('markets', [])
                                 if markets and len(markets) > 0:
-                                    for o in markets[0].get('outcomes', []):
+                                    for o in markets.get('outcomes', []):
                                         if o.get('name') == fav_name: 
                                             live_odds_fav = o.get('price')
                                     break
                                 
-                                if live_odds_fav and fav_pre_odds:
-                                    if live_odds_fav >= (fav_pre_odds * 1.4):
-                                        prob = calculate_comeback_probability(fav_pre_odds, live_odds_fav)
-                                        send_telegram_alert(tournament, p1, p2, fav_name, fav_pre_odds, live_odds_fav, prob)
+                            if live_odds_fav and fav_pre_odds:
+                                if live_odds_fav >= (fav_pre_odds * 1.4):
+                                    prob = calculate_comeback_probability(fav_pre_odds, live_odds_fav)
+                                    send_telegram_alert(tournament, p1, p2, fav_name, fav_pre_odds, live_odds_fav, prob)
+        except Exception as e:
+            logging.error(f"Error en monitoreo en vivo: {e}")
 
+# --- INICIALIZADOR DEL SERVICIO ---
+init_db()
+
+# EJECUCIÓN AUTOMÁTICA DEL MENSAJE DE PRUEBA ESTÁNDAR
+send_startup_test_message()
+
+scheduler = BackgroundScheduler()
+scheduler.add_job(func=lambda: schedule_wta_matches(scheduler), trigger="interval", minutes=60, id="cartelera")
 
 
