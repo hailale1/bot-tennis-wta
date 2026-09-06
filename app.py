@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from flask import Flask
 from apscheduler.schedulers.background import BackgroundScheduler
 
-# --- CONFIGURACIÓN DE LOGS Y VARIABLES DE ENTORNO ---
+# --- CONFIGURACIÓN DE LOGS ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 ODDS_API_KEY = os.getenv("ODDS_API_KEY", "").strip()
@@ -23,48 +23,46 @@ def home():
 
 def send_telegram_alert(tournament, p1, p2, fav_name, pre_odds, live_odds, prob):
     """Envía la alerta estructurada a Telegram usando el método oficial sendMessage."""
-    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendMessage"
-        
-        html_content = (
-            f"<b>🚨 ALERTA DE VALOR WTA 🚨</b>\n\n"
-            f"🏆 <b>Torneo:</b> {tournament.replace('_', ' ').upper()}\n"
-            f"🎾 <b>Partido:</b> {p1} vs {p2}\n"
-            f"⭐ <b>Favorita en Apuros:</b> {fav_name}\n\n"
-            f"📊 <b>Comparativa de Cuotas:</b>\n"
-            f"• Cuota Pre-Partido: {pre_odds}\n"
-            f"• Cuota en Vivo Actual: {live_odds}\n\n"
-            f"🎯 <b>Probabilidad de Remontada:</b> {prob}%"
-        )
-        
-        payload = {
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": html_content,
-            "parse_mode": "HTML"
-        }
-        try:
-            r = requests.post(url, json=payload, timeout=10)
-            logging.info(f"Intento de envío de alerta. Código de respuesta Telegram: {r.status_code}")
-        except Exception as e:
-            logging.error(f"Error al conectar con Telegram: {e}")
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+    url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendMessage"
+    html_content = (
+        f"<b>🚨 ALERTA DE VALOR WTA 🚨</b>\n\n"
+        f"🏆 <b>Torneo:</b> {tournament.replace('_', ' ').upper()}\n"
+        f"🎾 <b>Partido:</b> {p1} vs {p2}\n"
+        f"⭐ <b>Favorita en Apuros:</b> {fav_name}\n\n"
+        f"📊 <b>Comparativa de Cuotas:</b>\n"
+        f"• Cuota Pre-Partido: {pre_odds}\n"
+        f"• Cuota en Vivo Actual: {live_odds}\n\n"
+        f"🎯 <b>Probabilidad de Remontada:</b> {prob}%"
+    )
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": html_content, "parse_mode": "HTML"}
+    try:
+        r = requests.post(url, json=payload, timeout=10)
+        logging.info(f"Envío de alerta. Estado Telegram: {r.status_code}")
+    except Exception as e:
+        logging.error(f"Error conectando con Telegram: {e}")
 
 def send_startup_test_message():
     """Envía un mensaje de prueba estándar al iniciar para validar tokens."""
-    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": "<b>✅ Bot WTA Iniciado Correctamente</b>\nLa conexión con Telegram es exitosa mediante la API de producción. El escáner de cuotas ya está corriendo en segundo plano.",
-            "parse_mode": "HTML"
-        }
-        try:
-            r = requests.post(url, json=payload, timeout=10)
-            if r.status_code == 200:
-                logging.info("🚀 ¡Mensaje de prueba enviado con éxito a Telegram!")
-            else:
-                logging.error(f"❌ Error en mensaje de prueba. Código: {r.status_code} - Verifique si el Bot está dentro del canal/chat.")
-        except Exception as e:
-            logging.error(f"❌ No se pudo conectar con Telegram para la prueba: {e}")
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        logging.error("Faltan credenciales de Telegram en las variables de entorno.")
+        return
+    # CORREGIDO DE RAÍZ: Ya no usa variables mezcladas viejas
+    url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": "<b>✅ Bot WTA Iniciado Correctamente</b>\nEl escáner de cuotas ya está corriendo en segundo plano de forma estable.",
+        "parse_mode": "HTML"
+    }
+    try:
+        r = requests.post(url, json=payload, timeout=10)
+        if r.status_code == 200:
+            logging.info("🚀 ¡Mensaje de prueba enviado con éxito a Telegram!")
+        else:
+            logging.error(f"❌ Falló mensaje de prueba. Código: {r.status_code}. Revisa que el Bot esté dentro del chat.")
+    except Exception as e:
+        logging.error(f"❌ Error de conexión con Telegram: {e}")
 
 def calculate_comeback_probability(pre_odds_fav, live_odds_fav):
     if not pre_odds_fav or pre_odds_fav <= 1.0: return 50.0
@@ -88,6 +86,7 @@ def init_db():
     conn.close()
 
 def get_active_wta_tournaments():
+    if not ODDS_API_KEY: return []
     url = f"https://the-odds-api.com{ODDS_API_KEY}"
     try:
         r = requests.get(url, timeout=10)
@@ -195,13 +194,17 @@ def monitor_live_matches():
         except Exception as e:
             logging.error(f"Error en monitoreo en vivo: {e}")
 
-# --- INICIALIZADOR DEL SERVICIO ---
+# --- INICIALIZADOR ---
 init_db()
-
-# EJECUCIÓN AUTOMÁTICA DEL MENSAJE DE PRUEBA ESTÁNDAR
 send_startup_test_message()
 
 scheduler = BackgroundScheduler()
 scheduler.add_job(func=lambda: schedule_wta_matches(scheduler), trigger="interval", minutes=60, id="cartelera")
+scheduler.add_job(func=monitor_live_matches, trigger="interval", minutes=2, id="monitoreo")
+scheduler.start()
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+
 
 
