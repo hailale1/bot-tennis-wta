@@ -8,18 +8,20 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 app = Flask(__name__)
 
 def send_telegram_alert():
-    """Envía la alerta utilizando la nueva API v10 de Telegram."""
+    """Envía una segunda alerta simulando un caso real con el diseño definitivo."""
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        # CORREGIDO: Nuevo método oficial sendRichMessage exigido por Telegram
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendRichMessage"
+        url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendRichMessage"
         
-        # Formato HTML enriquecido compatible con la nueva API
+        # Formato de diseño real con emojis y estructura limpia
         html_content = (
-            "<h1>🚨 ALERTA DE VALOR WTA (TEST) 🚨</h1>"
-            "<p>🏆 <b>Torneo:</b> WTA US OPEN (PRUEBA DEFINITIVA)</p>"
-            "<p>🎾 <b>Partido:</b> Iga Swiatek vs Aryna Sabalenka</p>"
-            "<p>⭐ <b>Favorita:</b> Iga Swiatek</p><br>"
-            "<p>🎯 <b>Probabilidad de Remontada:</b> 72.5%</p>"
+            "<b>🚨 ALERTA DE VALOR WTA 🚨</b><br><br>"
+            "🏆 <b>Torneo:</b> WTA 1000 MADRID Open<br>"
+            "🎾 <b>Partido:</b> Paula Badosa vs Coco Gauff<br>"
+            "⭐ <b>Favorita en Apuros:</b> Paula Badosa<br><br>"
+            "📊 <b>Comparativa de Cuotas:</b><br>"
+            "• Cuota Pre-Partido: <code>1.45</code><br>"
+            "• Cuota en Vivo Actual: <code>2.62</code> <i>(¡Favorita perdiendo 1er Set!)</i><br><br>"
+            "🎯 <b>Probabilidad de Remontada:</b> <b>78.4%</b>"
         )
         
         payload = {
@@ -31,14 +33,14 @@ def send_telegram_alert():
         
         try:
             r = requests.post(url, json=payload, timeout=10)
-            print(f"Respuesta de Telegram API: {r.status_code} - {r.text}")
+            print(f"Segunda prueba enviada: {r.status_code}")
         except Exception as e:
             print(f"Error de red: {e}")
 
 @app.route('/')
 def home():
     send_telegram_alert()
-    return "Servidor WTA Activo - Alerta Enriquecida Enviada", 200
+    return "Segunda Alerta Enviada con Diseño Real", 200
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
