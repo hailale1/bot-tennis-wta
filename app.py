@@ -1,5 +1,6 @@
 import os
 import requests
+import threading
 from flask import Flask
 
 # Leer las variables guardadas en el panel de Render
@@ -15,13 +16,12 @@ def send_telegram_alert():
         
         message = (
             f"🚨 **ALERTA DE VALOR WTA (TEST)** 🚨\n\n"
-            f"🏆 **Torneo:** WTA US OPEN (PRUEBA)\n"
+            f"🏆 **Torneo:** WTA US OPEN (PRUEBA ARRANCADO)\n"
             f"🎾 **Partido:** Iga Swiatek vs Aryna Sabalenka\n"
             f"⭐ **Favorita:** Iga Swiatek\n\n"
             f"🎯 **Probabilidad de Remontada:** `72.5%`"
         )
         
-        # CORRECCIÓN DEFINITIVA: Usar formato JSON para que Telegram acepte el Markdown y los emojis
         payload = {
             "chat_id": TELEGRAM_CHAT_ID, 
             "text": message, 
@@ -29,21 +29,24 @@ def send_telegram_alert():
         }
         
         try:
-            # Se cambia 'data=payload' por 'json=payload' para asegurar la recepción
             r = requests.post(url, json=payload, timeout=10)
-            print(f"Respuesta de Telegram: {r.status_code} - {r.text}")
+            print(f"Respuesta de Telegram en arranque: {r.status_code} - {r.text}")
         except Exception as e:
-            print(f"Error de red: {e}")
+            print(f"Error de red en arranque: {e}")
 
 @app.route('/')
 def home():
-    return "Servidor WTA Activo", 200
-
-@app.route('/test-alert')
-def test_alert():
+    # Disparar también si entran a la página principal por si acaso
     send_telegram_alert()
-    return "Alerta de prueba disparada. Revisa tu Telegram.", 200
+    return "Servidor WTA Activo y Alerta Enviada", 200
+
+def run_auto_start():
+    # Ejecuta el envío inmediatamente al encender el servidor
+    send_telegram_alert()
 
 if __name__ == "__main__":
+    # Arranca el hilo de disparo automático antes de levantar la web
+    threading.Thread(target=run_auto_start, daemon=True).start()
+    
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
