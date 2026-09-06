@@ -86,7 +86,6 @@ def get_active_wta_tournaments():
     if not ODDS_API_KEY: 
         logging.error("Falta la variable ODDS_API_KEY en Render")
         return []
-    # URL COMPLETAMENTE CORREGIDA NATIVA V4
     url = f"https://the-odds-api.com{ODDS_API_KEY}"
     try:
         r = requests.get(url, timeout=10)
@@ -98,7 +97,6 @@ def get_active_wta_tournaments():
         return []
 
 def fetch_single_match_odds(sport_key, match_id, p1, p2):
-    # URL COMPLETAMENTE CORREGIDA NATIVA V4
     url = f"https://the-odds-api.com{sport_key}/odds/"
     params = {'apiKey': ODDS_API_KEY, 'regions': 'eu', 'markets': 'h2h'}
     try:
@@ -135,7 +133,6 @@ def fetch_single_match_odds(sport_key, match_id, p1, p2):
 def schedule_wta_matches(scheduler):
     wta_tournaments = get_active_wta_tournaments()
     for sport_key in wta_tournaments:
-        # URL COMPLETAMENTE CORREGIDA NATIVA V4
         url = f"https://the-odds-api.com{sport_key}/odds/"
         params = {'apiKey': ODDS_API_KEY, 'regions': 'eu', 'markets': 'h2h'}
         try:
@@ -164,7 +161,6 @@ def monitor_live_matches():
     logging.info("🔄 Verificando partidos EN VIVO circuito WTA...")
     wta_tournaments = get_active_wta_tournaments()
     for sport_key in wta_tournaments:
-        # URL COMPLETAMENTE CORREGIDA NATIVA V4
         url = f"https://the-odds-api.com{sport_key}/odds/?apiKey={ODDS_API_KEY}&regions=eu&markets=h2h"
         try:
             r = requests.get(url, timeout=10)
@@ -203,3 +199,8 @@ send_startup_test_message()
 
 scheduler = BackgroundScheduler()
 scheduler.add_job(func=lambda: schedule_wta_matches(scheduler), trigger="interval", minutes=60, id="cartelera")
+scheduler.add_job(func=monitor_live_matches, trigger="interval", minutes=2, id="monitoreo")
+scheduler.start()
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
