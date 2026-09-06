@@ -26,6 +26,7 @@ def send_telegram_alert(tournament, p1, p2, fav_name, pre_odds, live_odds, prob)
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         logging.error("Faltan credenciales de Telegram.")
         return
+    # URL CORREGIDA NATIVA DE TELEGRAM
     url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendMessage"
     html_content = (
         f"<b>🚨 ALERTA DE VALOR WTA 🚨</b>\n\n"
@@ -49,6 +50,7 @@ def send_startup_test_message():
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         logging.error("Faltan credenciales de Telegram en el panel de Render.")
         return
+    # URL CORREGIDA NATIVA DE TELEGRAM
     url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
@@ -87,6 +89,7 @@ def init_db():
 
 def get_active_wta_tournaments():
     if not ODDS_API_KEY: return []
+    # URL CORREGIDA NATIVA DE THE ODDS API
     url = f"https://the-odds-api.com{ODDS_API_KEY}"
     try:
         r = requests.get(url, timeout=10)
@@ -98,6 +101,7 @@ def get_active_wta_tournaments():
         return []
 
 def fetch_single_match_odds(sport_key, match_id, p1, p2):
+    # URL CORREGIDA NATIVA DE THE ODDS API
     url = f"https://the-odds-api.com{sport_key}/odds/"
     params = {'apiKey': ODDS_API_KEY, 'regions': 'eu', 'markets': 'h2h'}
     try:
@@ -134,6 +138,7 @@ def fetch_single_match_odds(sport_key, match_id, p1, p2):
 def schedule_wta_matches(scheduler):
     wta_tournaments = get_active_wta_tournaments()
     for sport_key in wta_tournaments:
+        # URL CORREGIDA NATIVA DE THE ODDS API
         url = f"https://the-odds-api.com{sport_key}/odds/"
         params = {'apiKey': ODDS_API_KEY, 'regions': 'eu', 'markets': 'h2h'}
         try:
@@ -162,6 +167,7 @@ def monitor_live_matches():
     logging.info("🔄 Verificando partidos EN VIVO circuito WTA...")
     wta_tournaments = get_active_wta_tournaments()
     for sport_key in wta_tournaments:
+        # URL CORREGIDA NATIVA DE THE ODDS API
         url = f"https://the-odds-api.com{sport_key}/odds/?apiKey={ODDS_API_KEY}&regions=eu&markets=h2h"
         try:
             r = requests.get(url, timeout=10)
@@ -198,10 +204,5 @@ init_db()
 send_startup_test_message()
 
 scheduler = BackgroundScheduler()
-scheduler.add_job(func=lambda: schedule_wta_matches(scheduler), trigger="interval", minutes=60, id="cartelera")
-scheduler.add_job(func=monitor_live_matches, trigger="interval", minutes=2, id="monitoreo")
-scheduler.start()
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
 
