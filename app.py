@@ -6,14 +6,11 @@ from datetime import datetime, timedelta
 from flask import Flask
 from apscheduler.schedulers.background import BackgroundScheduler
 
-# --- CONFIGURACIÓN DE LOGS ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# CREDENCIALES FORZADAS DIRECTAMENTE EN EL CÓDIGO
-TELEGRAM_BOT_TOKEN = "8826075554:AAG4YXvMl0H85aX2PxD7PuS0vfW70BRpeto"
-TELEGRAM_CHAT_ID = "484236900"
-
-# La API de cuotas se mantiene leyendo de Render (Asegúrate de que en Render se llame ODDS_API_KEY)
+# LEER DE FORMA SEGURA DESDE EL PANEL DE VARIABLES DE RENDER
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 ODDS_API_KEY = os.getenv("ODDS_API_KEY", "").strip()
 DB_NAME = "wta_bot.db"
 
@@ -26,6 +23,9 @@ def home():
 
 def send_telegram_alert(tournament, p1, p2, fav_name, pre_odds, live_odds, prob):
     """Envía la alerta estructurada a Telegram usando el método oficial sendMessage."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        logging.error("Faltan credenciales de Telegram.")
+        return
     url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendMessage"
     html_content = (
         f"<b>🚨 ALERTA DE VALOR WTA 🚨</b>\n\n"
@@ -46,10 +46,13 @@ def send_telegram_alert(tournament, p1, p2, fav_name, pre_odds, live_odds, prob)
 
 def send_startup_test_message():
     """Envía un mensaje de prueba estándar al iniciar para validar tokens."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        logging.error("Faltan credenciales de Telegram en el panel de Render.")
+        return
     url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
-        "text": "<b>✅ Bot WTA Iniciado Correctamente</b>\nEl escáner de cuotas ya está corriendo en segundo plano sin depender de variables externas de Render.",
+        "text": "<b>✅ Bot WTA Iniciado Correctamente</b>\nEl escáner de cuotas ya está corriendo en segundo plano de forma estable.",
         "parse_mode": "HTML"
     }
     try:
@@ -57,7 +60,7 @@ def send_startup_test_message():
         if r.status_code == 200:
             logging.info("🚀 ¡Mensaje de prueba enviado con éxito a Telegram!")
         else:
-            logging.error(f"❌ Falló mensaje de prueba. Código: {r.status_code}. Revisa si pusiste bien el ID del chat.")
+            logging.error(f"❌ Falló mensaje de prueba. Código: {r.status_code}. Revisa si el bot está en el chat.")
     except Exception as e:
         logging.error(f"❌ Error de conexión con Telegram: {e}")
 
@@ -83,9 +86,7 @@ def init_db():
     conn.close()
 
 def get_active_wta_tournaments():
-    if not ODDS_API_KEY: 
-        logging.error("Falta la variable ODDS_API_KEY en Render")
-        return []
+    if not ODDS_API_KEY: return []
     url = f"https://the-odds-api.com{ODDS_API_KEY}"
     try:
         r = requests.get(url, timeout=10)
@@ -193,7 +194,6 @@ def monitor_live_matches():
         except Exception as e:
             logging.error(f"Error en monitoreo en vivo: {e}")
 
-# --- INICIALIZADOR ---
 init_db()
 send_startup_test_message()
 
@@ -204,3 +204,4 @@ scheduler.start()
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+
