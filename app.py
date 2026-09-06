@@ -24,10 +24,8 @@ def home():
 def send_telegram_alert(tournament, p1, p2, fav_name, pre_odds, live_odds, prob):
     """Envía la alerta estructurada a Telegram usando la API oficial v10."""
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        # CORREGIDO: URL y método oficial de Telegram
         url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendMessage"
         
-        # CORREGIDO: Formato HTML estándar de Telegram sin etiquetas <br> nativas incompatibles
         html_content = (
             f"<b>🚨 ALERTA DE VALOR WTA 🚨</b>\n\n"
             f"🏆 <b>Torneo:</b> {tournament.replace('_', ' ').upper()}\n"
@@ -49,6 +47,24 @@ def send_telegram_alert(tournament, p1, p2, fav_name, pre_odds, live_odds, prob)
             logging.info(f"Intento de envío de alerta. Código: {r.status_code}")
         except Exception as e:
             logging.error(f"Error al conectar con Telegram: {e}")
+
+def send_startup_test_message():
+    """Envía un mensaje de prueba rápido al iniciar para validar tokens."""
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendMessage"
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": "<b>✅ Bot WTA Iniciado Correctamente</b>\nLa conexión con Telegram es exitosa. El escáner de cuotas ya está corriendo en segundo plano.",
+            "parse_mode": "HTML"
+        }
+        try:
+            r = requests.post(url, json=payload, timeout=10)
+            if r.status_code == 200:
+                logging.info("🚀 ¡Mensaje de prueba enviado con éxito a Telegram!")
+            else:
+                logging.error(f"❌ Error en mensaje de prueba. Código: {r.status_code} - Verifique TOKEN y CHAT_ID.")
+        except Exception as e:
+            logging.error(f"❌ No se pudo conectar con Telegram para la prueba: {e}")
 
 def calculate_comeback_probability(pre_odds_fav, live_odds_fav):
     if not pre_odds_fav or pre_odds_fav <= 1.0: return 50.0
@@ -72,7 +88,6 @@ def init_db():
     conn.close()
 
 def get_active_wta_tournaments():
-    # CORREGIDO: Ruta completa hacia el endpoint de deportes de The Odds API
     url = f"https://the-odds-api.com{ODDS_API_KEY}"
     try:
         r = requests.get(url, timeout=10)
@@ -84,7 +99,6 @@ def get_active_wta_tournaments():
         return []
 
 def fetch_single_match_odds(sport_key, match_id, p1, p2):
-    # CORREGIDO: Endpoint estructurado v4 oficial
     url = f"https://the-odds-api.com{sport_key}/odds/"
     params = {'apiKey': ODDS_API_KEY, 'regions': 'eu', 'markets': 'h2h'}
     try:
@@ -95,7 +109,7 @@ def fetch_single_match_odds(sport_key, match_id, p1, p2):
                     bookmakers = m.get('bookmakers', [])
                     p1_odds, p2_odds = None, None
                     if bookmakers and len(bookmakers) > 0:
-                        # CORREGIDO: Iteración correcta sobre la lista de bookmakers
+                        # Extrae el primer bookmaker disponible de forma segura
                         markets = bookmakers[0].get('markets', [])
                         if markets and len(markets) > 0:
                             for o in markets[0].get('outcomes', []):
@@ -120,7 +134,6 @@ def fetch_single_match_odds(sport_key, match_id, p1, p2):
 def schedule_wta_matches(scheduler):
     wta_tournaments = get_active_wta_tournaments()
     for sport_key in wta_tournaments:
-        # CORREGIDO: Endpoint estructurado v4 oficial
         url = f"https://the-odds-api.com{sport_key}/odds/"
         params = {'apiKey': ODDS_API_KEY, 'regions': 'eu', 'markets': 'h2h'}
         try:
@@ -149,7 +162,6 @@ def monitor_live_matches():
     logging.info("🔄 Verificando partidos EN VIVO circuito WTA...")
     wta_tournaments = get_active_wta_tournaments()
     for sport_key in wta_tournaments:
-        # CORREGIDO: Endpoint correcto para cuotas en vivo v4
         url = f"https://the-odds-api.com{sport_key}/odds/?apiKey={ODDS_API_KEY}&regions=eu&markets=h2h"
         try:
             r = requests.get(url, timeout=10)
@@ -166,7 +178,6 @@ def monitor_live_matches():
                         tournament, p1, p2, fav_name, fav_pre_odds = db_data
                         bookmakers = match.get('bookmakers', [])
                         if bookmakers and len(bookmakers) > 0:
-                            # CORREGIDO: Desglose seguro del primer bookmaker de la lista
                             markets = bookmakers[0].get('markets', [])
                             if markets and len(markets) > 0:
                                 live_odds_fav = None
@@ -174,7 +185,6 @@ def monitor_live_matches():
                                     if o.get('name') == fav_name: 
                                         live_odds_fav = o.get('price')
                                 
-                                # CORREGIDO: Lógica de cierre del disparador de alertas
                                 if live_odds_fav and fav_pre_odds:
                                     if live_odds_fav >= (fav_pre_odds * 1.4):
                                         prob = calculate_comeback_probability(fav_pre_odds, live_odds_fav)
@@ -184,12 +194,15 @@ def monitor_live_matches():
 
 # --- INICIALIZADOR DEL SERVICIO ---
 init_db()
+
+# EJECUCIÓN DEL DISPARADOR DE PRUEBA AL ARRANCAR
+send_startup_test_message()
+
 scheduler = BackgroundScheduler()
 scheduler.add_job(func=lambda: schedule_wta_matches(scheduler), trigger="interval", minutes=60, id="cartelera")
 scheduler.add_job(func=monitor_live_matches, trigger="interval", minutes=2, id="monitoreo")
 scheduler.start()
 
 if __name__ == '__main__':
-    # El servidor Flask mantiene la aplicación despierta en entornos como Render/Heroku
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
 
