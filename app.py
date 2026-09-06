@@ -9,46 +9,45 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 app = Flask(__name__)
 
 def send_telegram_alert():
-    """Envía la alerta detallada de tenis usando el método sendRichMessage."""
+    """Envía la alerta utilizando formato MarkdownV2 limpio para evitar bloqueos de la API."""
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
         url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendRichMessage"
         
-        html_content = (
-            "<b>🚨 ALERTA DE VALOR WTA (TEST) 🚨</b><br><br>"
-            "🏆 <b>Torneo:</b> WTA 1000 MADRID Open<br>"
-            "🎾 <b>Partido:</b> Paula Badosa vs Coco Gauff<br>"
-            "⭐ <b>Favorita en Apuros:</b> Paula Badosa<br><br>"
-            "📊 <b>Comparativa de Cuotas:</b><br>"
-            "• Cuota Pre-Partido: <code>1.45</code><br>"
-            "• Cuota en Vivo Actual: <code>2.62</code> <i>(¡Favorita perdiendo 1er Set!)</i><br><br>"
-            "🎯 <b>Probabilidad de Remontada:</b> <b>78.4%</b>"
+        # Formato Markdown puro y limpio exigido por la API de Telegram v10
+        markdown_content = (
+            "🚨 *ALERTA DE VALOR WTA (TEST)* 🚨\n\n"
+            "🏆 *Torneo:* WTA 1000 MADRID Open\n"
+            "🎾 *Partido:* Paula Badosa vs Coco Gauff\n"
+            "⭐ *Favorita en Apuros:* Paula Badosa\n\n"
+            "📊 *Comparativa de Cuotas:*\n"
+            "• Cuota Pre-Partido: `1.45`\n"
+            "• Cuota en Vivo Actual: `2.62` _(Favorita perdiendo)_ \n\n"
+            "🎯 *Probabilidad de Remontada:* *78.4%*"
         )
         
         payload = {
             "chat_id": TELEGRAM_CHAT_ID,
             "rich_message": {
-                "html": html_content
+                "markdown": markdown_content
             }
         }
         
         try:
             r = requests.post(url, json=payload, timeout=10)
-            print(f"Resultado del envío automático: {r.status_code}")
+            print(f"Resultado del envío Markdown: {r.status_code} - {r.text}")
         except Exception as e:
             print(f"Error de red: {e}")
 
 @app.route('/')
 def home():
-    return "Bot WTA Activo y Monitoreando", 200
+    return "Bot WTA Activo", 200
 
 def run_auto_start():
-    # Dispara la alerta inmediatamente al encender el servidor sin requerir links
+    # Envía el mensaje inmediatamente al arrancar el servidor
     send_telegram_alert()
 
 if __name__ == "__main__":
-    # Arranca el hilo de envío antes de que cargue la web
     threading.Thread(target=run_auto_start, daemon=True).start()
-    
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
 
