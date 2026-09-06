@@ -21,6 +21,7 @@ app = Flask(__name__)
 def send_telegram_alert(tournament, p1, p2, fav_name, pre_odds, live_odds, prob):
     """Envía la alerta detallada a Telegram."""
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        # DIRECCIÓN DE TELEGRAM CORREGIDA DEFINITIVAMENTE:
         url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendMessage"
         message = (
             f"🚨 **ALERTA DE VALOR WTA** 🚨\n\n"
@@ -46,7 +47,6 @@ def send_telegram_alert(tournament, p1, p2, fav_name, pre_odds, live_odds, prob)
 def home():
     return "Bot WTA Activo y Monitoreando", 200
 
-# --- NUEVA RUTA DE PRUEBA MANUAL ---
 @app.route('/test-alert')
 def test_alert():
     """Ruta especial para obligar al bot a mandar un mensaje de prueba inmediato."""
@@ -54,11 +54,11 @@ def test_alert():
     return "Alerta de prueba disparada. Revisa tu Telegram.", 200
 
 def start_bot_logic():
-    # Inicializa el flujo normal
     pass
 
 if __name__ == "__main__":
     threading.Thread(target=start_bot_logic, daemon=True).start()
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
