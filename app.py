@@ -1,30 +1,39 @@
 import os
 import requests
-import threading
-import time
 from flask import Flask
 
+# Leer las variables guardadas en el panel de Render
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
 app = Flask(__name__)
 
 def send_telegram_alert():
-    """Función directa de prueba hacia Telegram."""
+    """Función de envío original corregida utilizando formato JSON estricto."""
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
         url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendMessage"
+        
         message = (
             f"🚨 **ALERTA DE VALOR WTA (TEST)** 🚨\n\n"
             f"🏆 **Torneo:** WTA US OPEN (PRUEBA)\n"
             f"🎾 **Partido:** Iga Swiatek vs Aryna Sabalenka\n"
-            f"⭐ **Favorita:** Iga Swiatek\n"
-            f"🎯 **Probabilidad:** `72.5%`"
+            f"⭐ **Favorita:** Iga Swiatek\n\n"
+            f"🎯 **Probabilidad de Remontada:** `72.5%`"
         )
-        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+        
+        # CORRECCIÓN DEFINITIVA: Usar formato JSON para que Telegram acepte el Markdown y los emojis
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID, 
+            "text": message, 
+            "parse_mode": "Markdown"
+        }
+        
         try:
-            requests.post(url, data=payload, timeout=10)
-        except Exception:
-            pass
+            # Se cambia 'data=payload' por 'json=payload' para asegurar la recepción
+            r = requests.post(url, json=payload, timeout=10)
+            print(f"Respuesta de Telegram: {r.status_code} - {r.text}")
+        except Exception as e:
+            print(f"Error de red: {e}")
 
 @app.route('/')
 def home():
